@@ -1,30 +1,16 @@
-!***********************************************************************
-!*                   GNU Lesser General Public License
-!*
-!* This file is part of the GFDL Land Model 4 (LM4).
-!*
-!* LM4 is free software: you can redistribute it and/or modify it under
-!* the terms of the GNU Lesser General Public License as published by
-!* the Free Software Foundation, either version 3 of the License, or (at
-!* your option) any later version.
-!*
-!* LM4 is distributed in the hope that it will be useful, but WITHOUT
-!* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-!* FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
-!* for more details.
-!*
-!* You should have received a copy of the GNU Lesser General Public
-!* License along with LM4.  If not, see <http://www.gnu.org/licenses/>.
-!***********************************************************************
 ! ============================================================================
 ! snow model module
 ! ============================================================================
 module snow_mod
 
+#ifdef INTERNAL_FILE_NML
 use mpp_mod, only: input_nml_file
+#else
+use fms_mod, only: open_namelist_file
+#endif
 
-use fms_mod, only : error_mesg, check_nml_error, &
-     stdlog, mpp_pe, mpp_root_pe, FATAL, NOTE
+use fms_mod, only : error_mesg, file_exist, check_nml_error, &
+     stdlog, close_file, mpp_pe, mpp_root_pe, FATAL, NOTE
 use time_manager_mod,   only: time_type_to_real
 use constants_mod,      only: tfreeze, hlv, hlf, PI
 
@@ -53,7 +39,6 @@ public :: snow_end
 public :: save_snow_restart
 public :: snow_get_depth_area
 public :: snow_sfc_water
-public :: sweep_tiny_snow
 public :: snow_step_1
 public :: snow_step_2
 ! =====end of public interfaces ==============================================
@@ -77,9 +62,9 @@ real :: init_temp = 260.   ! cold-start snow T
 real :: init_pack_ws   =   0.
 real :: init_pack_wl   =   0.
 real :: min_snow_mass = 0.
-logical :: prevent_tiny_snow = .FALSE. ! if true, tiny snow is removed at the 
+logical :: prevent_tiny_snow = .FALSE. ! if true, tiny snow is removed at the
    ! beginning of fast time step to avoid numerical issues. There is no harm
-   ! in doing that, but it changes answers, so for compatibility with older code 
+   ! in doing that, but it changes answers, so for compatibility with older code
    ! turn it off.
 
 namelist /snow_nml/ retro_heat_capacity, lm2, steal, albedo_to_use, &
@@ -105,7 +90,7 @@ contains
 ! ============================================================================
 subroutine read_snow_namelist()
   ! ---- local vars
-  integer :: file_unit         ! unit for namelist i/o
+  integer :: unit         ! unit for namelist i/o
   integer :: io           ! i/o status for the namelist
   integer :: ierr         ! error code, returned by i/o routines
   integer :: l            ! layer iterator
@@ -114,11 +99,24 @@ subroutine read_snow_namelist()
 
   call log_version(version, module_name, &
   __FILE__)
+#ifdef INTERNAL_FILE_NML
   read (input_nml_file, nml=snow_nml, iostat=io)
   ierr = check_nml_error(io, 'snow_nml')
+#else
+  if (file_exist('input.nml')) then
+     unit = open_namelist_file()
+     ierr = 1;
+     do while (ierr /= 0)
+        read (unit, nml=snow_nml, iostat=io, end=10)
+        ierr = check_nml_error (io, 'snow_nml')
+     enddo
+10   continue
+     call close_file (unit)
+  endif
+#endif
   if (mpp_pe() == mpp_root_pe()) then
-     file_unit=stdlog()
-     write(file_unit, nml=snow_nml)
+     unit=stdlog()
+     write(unit, nml=snow_nml)
   endif
 
   ! -------- set up vertical discretization --------
@@ -139,7 +137,7 @@ subroutine snow_init()
   integer :: k
   type(land_tile_enum_type)     :: ce    ! tile list enumerator
   type(land_tile_type), pointer :: tile  ! pointer to current tile
-  character(*), parameter :: restart_file_name='INPUT/snow.nc'
+  character(*), parameter :: restart_file_name='INPUT/snow.res.nc'
   type(land_restart_type) :: restart
   logical :: restart_exists
 
@@ -200,13 +198,13 @@ subroutine save_snow_restart (tile_dim_length, timestamp)
 
   call error_mesg('snow_end','writing NetCDF restart',NOTE)
 ! Note that filename is updated for tile & rank numbers during file creation
-  filename = 'RESTART/'//trim(timestamp)//'snow.nc'
+  filename = trim(timestamp)//'snow.res.nc'
   call init_land_restart(restart, filename, snow_tile_exists, tile_dim_length)
-  call add_restart_axis(restart,'zfull',zz(1:num_l),.false.,"Z",longname='depth of level centers',units="")
+  call add_restart_axis(restart,'zfull',zz(1:num_l),'Z',longname='depth of level centers',sense=-1)
 
-  call add_tile_data(restart,'temp','zfull          ', snow_temp_ptr, 'snow temperature','degrees_K')
-  call add_tile_data(restart,'wl'  ,'zfull          ', snow_wl_ptr,   'snow liquid water content','kg/m2')
-  call add_tile_data(restart,'ws'  ,'zfull          ', snow_ws_ptr,   'snow solid water content','kg/m2')
+  call add_tile_data(restart,'temp','zfull', snow_temp_ptr, 'snow temperature','degrees_K')
+  call add_tile_data(restart,'wl'  ,'zfull', snow_wl_ptr,   'snow liquid water content','kg/m2')
+  call add_tile_data(restart,'ws'  ,'zfull', snow_ws_ptr,   'snow solid water content','kg/m2')
 
   call save_land_restart(restart)
   call free_land_restart(restart)
@@ -230,31 +228,6 @@ end subroutine
 
 
 ! ============================================================================
-! if snow amount is below specified limit, sweeps it into runoff
-subroutine sweep_tiny_snow(snow, lrunf, frunf, hlrunf, hfrunf)
-  type(snow_tile_type), intent(inout) :: snow
-  real, intent(out) :: lrunf, frunf, hlrunf, hfrunf
-
-  real :: snow_mass
-  integer :: l
-
-  lrunf=0 ; frunf=0 ; hlrunf=0 ; hfrunf=0
-  if (.not.prevent_tiny_snow) return ! do nothing, return zeros
-
-  snow_mass  = sum(snow%ws)
-  ! check if the snow is small enough to warrant sweeping
-  if ( snow_mass<0 .or. snow_mass >= min_snow_mass ) return
-
-  lrunf  = sum(snow%wl) ; frunf  = snow_mass
-  hlrunf = 0.0 ; hfrunf = 0.0
-  do l = 1, num_l
-     hlrunf = hlrunf + clw*snow%wl(l)*(snow%T(l)-tfreeze)
-     hfrunf = hfrunf + csw*snow%ws(l)*(snow%T(l)-tfreeze)
-  enddo
-  snow%ws = 0 ; snow%wl = 0
-end subroutine sweep_tiny_snow
-
-! ============================================================================
 ! update snow properties explicitly for time step.
 ! integrate snow-heat conduction equation upward from bottom of snow
 ! to surface, delivering linearization of surface ground heat flux.
@@ -268,7 +241,7 @@ subroutine snow_step_1 ( snow, snow_G_Z, snow_G_TZ, &
        snow_rh, snow_area, snow_G0, snow_DGDT
 
   ! ---- local vars
-  real :: snow_depth, bbb, denom, dt_e
+  real :: snow_mass, snow_depth, bbb, denom, dt_e
   real, dimension(num_l):: aaa, ccc, thermal_cond, dz_phys, heat_capacity
   integer :: l
 
@@ -276,6 +249,22 @@ subroutine snow_step_1 ( snow, snow_G_Z, snow_G_TZ, &
 ! in preparation for implicit energy balance, determine various measures
 ! of water availability, so that vapor fluxes will not exceed mass limits
 ! ----------------------------------------------------------------------------
+
+  ! sweep tiny amount of snow if requested, store respective values of runoff in the
+  ! soil tile variables to be added in snow_step_2 to the returned runoff
+  snow%lswept=0 ; snow%fswept=0 ; snow%hlswept=0 ; snow%hfswept=0
+  if (prevent_tiny_snow) then
+     snow_mass  = sum(snow%ws)
+     if ( snow_mass>0 .and. snow_mass<min_snow_mass ) then
+        snow%lswept  = sum(snow%wl) ; snow%fswept  = snow_mass
+        snow%hlswept = 0.0 ;          snow%hfswept = 0.0
+        do l = 1, num_l
+           snow%hlswept = snow%hlswept + clw*snow%wl(l)*(snow%T(l)-tfreeze)
+           snow%hfswept = snow%hfswept + csw*snow%ws(l)*(snow%T(l)-tfreeze)
+        enddo
+        snow%ws = 0 ; snow%wl = 0
+     endif
+  endif
 
   call snow_data_thermodynamics ( snow_rh, thermal_cond )
   snow_depth= 0.0
@@ -944,6 +933,11 @@ end subroutine snow_step_1
      write(*,*) 'HEAT          ', snow_HEAT
   endif
 
+  ! add swept snow to runoff
+  snow_lrunf  = snow_lrunf  + snow%lswept/delta_time
+  snow_frunf  = snow_frunf  + snow%fswept/delta_time
+  snow_hlrunf = snow_hlrunf + snow%hlswept/delta_time
+  snow_hfrunf = snow_hfrunf + snow%hfswept/delta_time
 end subroutine snow_step_2
 
 ! ============================================================================

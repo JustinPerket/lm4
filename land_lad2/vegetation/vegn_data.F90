@@ -1,26 +1,13 @@
-!***********************************************************************
-!*                   GNU Lesser General Public License
-!*
-!* This file is part of the GFDL Land Model 4 (LM4).
-!*
-!* LM4 is free software: you can redistribute it and/or modify it under
-!* the terms of the GNU Lesser General Public License as published by
-!* the Free Software Foundation, either version 3 of the License, or (at
-!* your option) any later version.
-!*
-!* LM4 is distributed in the hope that it will be useful, but WITHOUT
-!* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-!* FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
-!* for more details.
-!*
-!* You should have received a copy of the GNU Lesser General Public
-!* License along with LM4.  If not, see <http://www.gnu.org/licenses/>.
-!***********************************************************************
 module vegn_data_mod
 
+#ifdef INTERNAL_FILE_NML
 use mpp_mod, only: input_nml_file
-use fms_mod, only : check_nml_error, &
-     stdlog, stdout
+#else
+use fms_mod, only: open_namelist_file
+#endif
+
+use fms_mod, only : file_exist, check_nml_error, &
+     close_file, stdlog, stdout
 
 use land_constants_mod, only : NBANDS, BAND_VIS, BAND_NIR
 use land_tile_selectors_mod, only : &
@@ -478,7 +465,7 @@ contains ! ###################################################################
 ! ============================================================================
 subroutine read_vegn_data_namelist()
   ! ---- local vars
-  integer :: file_unit         ! unit for namelist i/o
+  integer :: unit         ! unit for namelist i/o
   integer :: io           ! i/o status for the namelist
   integer :: ierr         ! error code, returned by i/o routines
   integer :: i
@@ -487,22 +474,35 @@ subroutine read_vegn_data_namelist()
 
   call log_version(version, module_name, &
   __FILE__)
+#ifdef INTERNAL_FILE_NML
   read (input_nml_file, nml=vegn_data_nml, iostat=io)
   ierr = check_nml_error(io, 'vegn_data_nml')
+#else
+  if (file_exist('input.nml')) then
+     unit = open_namelist_file()
+     ierr = 1;
+     do while (ierr /= 0)
+        read (unit, nml=vegn_data_nml, iostat=io, end=10)
+        ierr = check_nml_error (io, 'vegn_data_nml')
+     enddo
+10   continue
+     call close_file (unit)
+  endif
+#endif
 
-  file_unit=stdlog()
+  unit=stdlog()
 
   ! reconcile values of fact_crit_phen and cnst_crit_phen
   cnst_crit_phen = max(0.0,min(1.0,cnst_crit_phen))
   fact_crit_phen = max(0.0,fact_crit_phen)
   where (cnst_crit_phen/=0) fact_crit_phen=0.0
-  write(file_unit,*)'reconciled fact_crit_phen and cnst_crit_phen'
+  write(unit,*)'reconciled fact_crit_phen and cnst_crit_phen'
 
   ! do the same for fire
   cnst_crit_fire = max(0.0,min(1.0,cnst_crit_fire))
   fact_crit_fire = max(0.0,fact_crit_fire)
   where (cnst_crit_fire/=0) fact_crit_fire=0.0
-  write(file_unit,*)'reconciled fact_crit_fire and cnst_crit_fire'
+  write(unit,*)'reconciled fact_crit_fire and cnst_crit_fire'
 
   ! initialize vegetation data structure
 
@@ -584,7 +584,7 @@ subroutine read_vegn_data_namelist()
   call register_tile_selector('ntrlgrass', long_name='natural (non-human-maintained) grass',&
           tag = SEL_VEGN, idata1 = NG_SEL_TAG)
 
-  write (file_unit, nml=vegn_data_nml)
+  write (unit, nml=vegn_data_nml)
 
   call init_with_headers(table,species_name)
   call add_row(table,'Treefall dist. rate', spdata(:)%treefall_disturbance_rate)
@@ -656,7 +656,7 @@ subroutine read_vegn_data_namelist()
   call add_row(table,'tracer_cuticular_cond',spdata(:)%tracer_cuticular_cond)
 
   call print(table,stdout())
-  call print(table,file_unit)
+  call print(table,unit)
 
 end subroutine
 

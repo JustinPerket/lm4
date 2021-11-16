@@ -1,35 +1,38 @@
-!***********************************************************************
-!*                   GNU Lesser General Public License
-!*
-!* This file is part of the GFDL Land Model 4 (LM4).
-!*
-!* LM4 is free software: you can redistribute it and/or modify it under
-!* the terms of the GNU Lesser General Public License as published by
-!* the Free Software Foundation, either version 3 of the License, or (at
-!* your option) any later version.
-!*
-!* LM4 is distributed in the hope that it will be useful, but WITHOUT
-!* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-!* FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
-!* for more details.
-!*
-!* You should have received a copy of the GNU Lesser General Public
-!* License along with LM4.  If not, see <http://www.gnu.org/licenses/>.
-!***********************************************************************
 module river_physics_mod
+
+!-----------------------------------------------------------------------
+!                   GNU General Public License
+!
+! This program is free software; you can redistribute it and/or modify it and
+! are expected to follow the terms of the GNU General Public License
+! as published by the Free Software Foundation; either version 2 of
+! the License, or (at your option) any later version.
+!
+! For the full text of the GNU General Public License,
+! write to: Free Software Foundation, Inc.,
+!           675 Mass Ave, Cambridge, MA 02139, USA.
+! or see:   http://www.gnu.org/licenses/gpl.html
+!-----------------------------------------------------------------------
 ! <CONTACT EMAIL="klf@gfdl.noaa.gov"> Kirsten Findell </CONTACT>
 ! <CONTACT EMAIL="z1l@gfdl.noaa.gov"> Zhi Liang </CONTACT>
 
+#ifdef INTERNAL_FILE_NML
+  use mpp_mod, only: input_nml_file
+#else
+  use fms_mod, only: open_namelist_file
+#endif
+
   use mpp_mod,         only : mpp_sync_self, mpp_send, mpp_recv, EVENT_RECV, EVENT_SEND
   use mpp_mod,         only : mpp_npes, mpp_error, FATAL, mpp_get_current_pelist
-  use mpp_mod,         only : mpp_root_pe, mpp_pe, mpp_max, input_nml_file
+  use mpp_mod,         only : mpp_root_pe, mpp_pe, mpp_max
   use mpp_mod,         only : COMM_TAG_1, COMM_TAG_2, COMM_TAG_3, COMM_TAG_4
   use mpp_domains_mod, only : domain2d, mpp_get_compute_domain, mpp_get_data_domain
   use mpp_domains_mod, only : ZERO, NINETY, MINUS_NINETY, mpp_update_domains
   use mpp_domains_mod, only : mpp_get_compute_domains
   use mpp_domains_mod, only : mpp_get_num_overlap, mpp_get_overlap
   use mpp_domains_mod, only : mpp_get_update_size, mpp_get_update_pelist
-  use fms_mod,         only : check_nml_error, stdlog
+  use fms_mod,         only : stdlog
+  use fms_mod,         only : close_file, check_nml_error, file_exist
   use diag_manager_mod,only : register_diag_field, send_data
   use tracer_manager_mod, only : NO_TRACER
   use river_type_mod,  only : river_type, Leo_Mad_trios, NO_RIVER_FLAG
@@ -130,8 +133,21 @@ contains
 
 
 !--- read namelist -------------------------------------------------
+#ifdef INTERNAL_FILE_NML
     read (input_nml_file, nml=river_physics_nml, iostat=io_status)
     ierr = check_nml_error(io_status, 'river_physics_nml')
+#else
+    if (file_exist('input.nml')) then
+      unit = open_namelist_file()
+      ierr = 1;
+      do while ( ierr/=0 )
+         read  (unit, river_physics_nml, iostat=io_status, end=10)
+         ierr = check_nml_error(io_status,'river_physics_nml')
+      enddo
+10    continue
+      call close_file (unit)
+    endif
+#endif
 
 !--- write version and namelist info to logfile --------------------
     call log_version(version, module_name, &
@@ -562,7 +578,7 @@ contains
     integer, allocatable, dimension(:,:) :: is2_send, ie2_send, js2_send, je2_send
     integer, allocatable, dimension(:,:) :: rot_send, rot_recv, dir_send, dir_recv
     integer, allocatable, dimension(:)   :: send_pelist, recv_pelist, pelist_r, pelist_s
-    integer, allocatable, dimension(:)   :: send_count, recv_count, recv_size2, send_arr
+    integer, allocatable, dimension(:)   :: send_count, recv_count, recv_size2
     integer, allocatable, dimension(:)   :: isl, iel, jsl, jel
     integer, allocatable, dimension(:)   :: sbuf, rbuf
     type(comm_type), pointer             :: send => NULL()
@@ -1128,14 +1144,12 @@ contains
        call mpp_recv(recv_size2(p), glen = 1, from_pe = recv_pelist(p), block=.FALSE., tag=COMM_TAG_2 )
     enddo
 
-    if(nsend_update>0) allocate(send_arr(nsend_update))
     do p= 1, nsend_update
        msgsize = 0
        do m = 1, maxtravel
           msgsize = msgsize + 2*halo_update(m)%send(p)%count
        enddo
-       send_arr(p) = msgsize
-       call mpp_send(send_arr(p), plen = 1, to_pe = send_pelist(p), tag=COMM_TAG_2)
+       call mpp_send(msgsize, plen = 1, to_pe = send_pelist(p), tag=COMM_TAG_2)
     enddo
 
     call mpp_sync_self(check=EVENT_RECV)
@@ -1237,7 +1251,6 @@ contains
     if(allocated(send_buffer)) deallocate(send_buffer)
     if(allocated(recv_buffer)) deallocate(recv_buffer)
     if(allocated(recv_size2 )) deallocate(recv_size2 )
-    if(allocated(send_arr   )) deallocate(send_arr   )
 
     !--- set up buffer for send and recv.
     send_size = 0

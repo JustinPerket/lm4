@@ -1,21 +1,3 @@
-!***********************************************************************
-!*                   GNU Lesser General Public License
-!*
-!* This file is part of the GFDL Land Model 4 (LM4).
-!*
-!* LM4 is free software: you can redistribute it and/or modify it under
-!* the terms of the GNU Lesser General Public License as published by
-!* the Free Software Foundation, either version 3 of the License, or (at
-!* your option) any later version.
-!*
-!* LM4 is distributed in the hope that it will be useful, but WITHOUT
-!* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-!* FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
-!* for more details.
-!*
-!* You should have received a copy of the GNU Lesser General Public
-!* License along with LM4.  If not, see <http://www.gnu.org/licenses/>.
-!***********************************************************************
 module vegetation_mod
 
 #include "../shared/debug.inc"
@@ -26,7 +8,7 @@ use mpp_mod, only: input_nml_file
 use fms_mod, only: open_namelist_file
 #endif
 
-use fms_mod, only: error_mesg, NOTE,FATAL, &
+use fms_mod, only: error_mesg, NOTE,FATAL, file_exist, close_file, &
       check_nml_error, stdlog
 use mpp_mod, only: mpp_sum, mpp_max, mpp_pe, mpp_root_pe, mpp_sync, stdout
 use time_manager_mod, only: time_type, time_type_to_real, get_date, operator(-)
@@ -83,7 +65,7 @@ use soil_carbon_mod, only : add_litter, poolTotalCarbon, cull_cohorts, &
      soil_carbon_option, SOILC_CENTURY, SOILC_CENTURY_BY_LAYER, SOILC_CORPSE
 use soil_mod, only : add_root_litter, redistribute_peat_carbon
 
-use fms2_io_mod, only: close_file, FmsNetcdfFile_t, open_file, read_data
+use fms_io_mod, only: fms_io_unstructured_read
 
 implicit none
 private
@@ -207,8 +189,21 @@ subroutine read_vegn_namelist()
 
   call log_version(version, module_name, &
   __FILE__)
-  read (input_nml_file, nml=vegn_nml, iostat=io)
-  ierr = check_nml_error(io, 'vegn_nml')
+#ifdef INTERNAL_FILE_NML
+    read (input_nml_file, nml=vegn_nml, iostat=io)
+    ierr = check_nml_error(io, 'vegn_nml')
+#else
+  if (file_exist('input.nml')) then
+     unit = open_namelist_file()
+     ierr = 1;
+     do while (ierr /= 0)
+        read (unit, nml=vegn_nml, iostat=io, end=10)
+        ierr = check_nml_error (io, 'vegn_nml')
+     enddo
+10   continue
+     call close_file (unit)
+  endif
+#endif
 
   unit=stdlog()
 
@@ -255,8 +250,6 @@ subroutine vegn_init(id_ug,id_band)
   real, allocatable :: t_ann(:),t_cold(:),p_ann(:),ncm(:) ! buffers for biodata reading
   logical :: did_read_biodata
   integer :: i,j,l ! indices of current tile
-  logical :: exists
-  type(FmsNetcdfFile_t) :: fileobj
 
   module_is_initialized = .TRUE.
 
@@ -268,8 +261,8 @@ subroutine vegn_init(id_ug,id_band)
   ! ---- initialize vegn state ---------------------------------------------
   n_accum = 0
   nmn_acm = 0
-  call open_land_restart(restart1,'INPUT/vegn1.nc',restart_1_exists)
-  call open_land_restart(restart2,'INPUT/vegn2.nc',restart_2_exists)
+  call open_land_restart(restart1,'INPUT/vegn1.res.nc',restart_1_exists)
+  call open_land_restart(restart2,'INPUT/vegn2.res.nc',restart_2_exists)
   if (restart_1_exists) then
      call error_mesg('vegn_init',&
           'reading NetCDF restarts "INPUT/vegn1.res.nc" and "INPUT/vegn2.res.nc"',&
@@ -292,8 +285,14 @@ subroutine vegn_init(id_ug,id_band)
 
 
      ! read global variables
-     call read_data(restart2%rhandle, "n_accum", n_accum)
-     call read_data(restart2%rhandle, "nmn_acm", nmn_acm)
+     call fms_io_unstructured_read(restart2%basename, &
+                                   "n_accum", &
+                                   n_accum, &
+                                   lnd%ug_domain)
+     call fms_io_unstructured_read(restart2%basename, &
+                                   "nmn_acm", &
+                                   nmn_acm, &
+                                   lnd%ug_domain)
 
      call get_int_cohort_data(restart2, 'species', cohort_species_ptr)
      call get_cohort_data(restart2, 'hite', cohort_height_ptr)
@@ -307,6 +306,12 @@ subroutine vegn_init(id_ug,id_band)
      if(field_exists(restart2,'leaf_age')) &
           call get_cohort_data(restart2,'leaf_age',cohort_leaf_age_ptr)
      call get_cohort_data(restart2, 'npp_prev_day', cohort_npp_previous_day_ptr)
+     ! for reproducibility across mid-day restarts 
+     if (field_exists(restart2,'carbon_gain')) then
+        call get_cohort_data(restart2, 'carbon_gain', cohort_carbon_gain_ptr)
+        call get_cohort_data(restart2, 'bwood_gain', cohort_bwood_gain_ptr)
+        call get_cohort_data(restart2, 'npp_prev_day_acm', cohort_npp_previous_day_tmp_ptr)
+     endif
 
      if(field_exists(restart2,'landuse')) &
           call get_int_tile_data(restart2,'landuse',vegn_landuse_ptr)
@@ -376,25 +381,22 @@ subroutine vegn_init(id_ug,id_band)
   call free_land_restart(restart2)
 
   ! read climatological fields for initialization of species distribution
-  exists = open_file(fileobj, "INPUT/biodata.nc", mode="read")
-  if (exists) then
+  if (file_exist('INPUT/biodata.nc'))then
      allocate(&
           t_ann (lnd%ls:lnd%le),&
           t_cold(lnd%ls:lnd%le),&
           p_ann (lnd%ls:lnd%le),&
           ncm   (lnd%ls:lnd%le) )
-     call read_field(fileobj, 'T_ANN', t_ann, interp='nearest')
-     call read_field(fileobj, 'T_COLD', t_cold, interp='nearest')
-     call read_field(fileobj, 'P_ANN', p_ann, interp='nearest')
-     call read_field(fileobj, 'NCM', ncm, interp='nearest')
+     call read_field( 'INPUT/biodata.nc','T_ANN',  t_ann,  interp='nearest')
+     call read_field( 'INPUT/biodata.nc','T_COLD', t_cold, interp='nearest')
+     call read_field( 'INPUT/biodata.nc','P_ANN',  p_ann,  interp='nearest')
+     call read_field( 'INPUT/biodata.nc','NCM',    ncm,    interp='nearest')
      did_read_biodata = .TRUE.
      call error_mesg('vegn_init','did read INPUT/biodata.nc',NOTE)
-     call close_file(fileobj)
   else
      did_read_biodata = .FALSE.
      call error_mesg('vegn_init','did NOT read INPUT/biodata.nc',NOTE)
   endif
-
   ! Go through all tiles and initialize the cohorts that have not been initialized yet --
   ! this allows to read partial restarts. Also initialize accumulation counters to zero
   ! or the values from the restarts.
@@ -785,7 +787,7 @@ subroutine save_vegn_restart(tile_dim_length,timestamp)
   call error_mesg('vegn_end','writing NetCDF restart',NOTE)
 
   ! create output file, including internal structure necessary for tile output
-  filename = 'RESTART/'//trim(timestamp)//'vegn1.nc'
+  filename = trim(timestamp)//'vegn1.res.nc'
   call init_land_restart(restart1, filename, vegn_tile_exists, tile_dim_length)
 
   ! create compressed dimension for vegetation cohorts -- must be called even
@@ -800,7 +802,7 @@ subroutine save_vegn_restart(tile_dim_length,timestamp)
   call free_land_restart(restart1)
 
 
-  filename = 'RESTART/'//trim(timestamp)//'vegn2.nc'
+  filename = trim(timestamp)//'vegn2.res.nc'
   call init_land_restart(restart2, filename, vegn_tile_exists, tile_dim_length)
   ! create compressed dimension for vegetation cohorts -- see note above
   call create_cohort_dimension(restart2)
@@ -818,10 +820,10 @@ subroutine save_vegn_restart(tile_dim_length,timestamp)
   ! n_accum and nmn_acm are currently the same for all tiles; we only call mpp_max
   ! to handle the situation when there are no tiles in the current domain
   call mpp_max(n_accum); call mpp_max(nmn_acm)
-  call add_scalar_data(restart2,'n_accum',n_accum,'number of accumulated steps', 'none')
+  call add_scalar_data(restart2,'n_accum',n_accum,'number of accumulated steps')
 
-  call add_scalar_data(restart2,'nmn_acm',nmn_acm,'number of accumulated months', 'none')
-  call add_int_cohort_data(restart2,'species', cohort_species_ptr, 'vegetation species', 'none')
+  call add_scalar_data(restart2,'nmn_acm',nmn_acm,'number of accumulated months')
+  call add_int_cohort_data(restart2,'species', cohort_species_ptr, 'vegetation species')
   call add_cohort_data(restart2,'hite', cohort_height_ptr, 'vegetation height','m')
   call add_cohort_data(restart2,'bl', cohort_bl_ptr, 'biomass of leaves per individual','kg C/m2')
   call add_cohort_data(restart2,'blv', cohort_blv_ptr, 'biomass of virtual leaves (labile store) per individual','kg C/m2')
@@ -829,8 +831,13 @@ subroutine save_vegn_restart(tile_dim_length,timestamp)
   call add_cohort_data(restart2,'bsw', cohort_bsw_ptr, 'biomass of sapwood per individual','kg C/m2')
   call add_cohort_data(restart2,'bwood', cohort_bwood_ptr, 'biomass of heartwood per individual','kg C/m2')
   call add_cohort_data(restart2,'bliving', cohort_bliving_ptr, 'total living biomass per individual','kg C/m2')
-  call add_int_cohort_data(restart2,'status', cohort_status_ptr, 'leaf status', 'none')
+  call add_int_cohort_data(restart2,'status', cohort_status_ptr, 'leaf status')
   call add_cohort_data(restart2,'leaf_age',cohort_leaf_age_ptr, 'age of leaves since bud burst', 'days')
+
+  ! for reproducibility across mid-day restarts
+  call add_cohort_data(restart2,'carbon_gain',cohort_carbon_gain_ptr, 'carbon gain during a day', 'kgC/m2')
+  call add_cohort_data(restart2,'bwood_gain',cohort_bwood_gain_ptr, 'wood gain during a day', 'kgC/m2')
+  call add_cohort_data(restart2,'npp_prev_day_acm', cohort_npp_previous_day_tmp_ptr, 'cumulative sum of NPP for average values','kg C/(m2 year)')
 
   !#### MODIFIED BY PPG 2016-12-01
   call add_cohort_data(restart2, 'Anlayer_acm', cohort_Anlayer_acm_ptr,  ' Cumulative Net Photosynthesis for new Lai layer', 'kg C/(m2 year)')
@@ -839,7 +846,7 @@ subroutine save_vegn_restart(tile_dim_length,timestamp)
 
   call add_cohort_data(restart2,'npp_prev_day', cohort_npp_previous_day_ptr, 'previous day NPP','kg C/(m2 year)')
 
-  call add_int_tile_data(restart2,'landuse',vegn_landuse_ptr,'vegetation land use type', 'none')
+  call add_int_tile_data(restart2,'landuse',vegn_landuse_ptr,'vegetation land use type')
   call add_tile_data(restart2,'age',vegn_age_ptr,'vegetation age', 'yr')
   call add_tile_data(restart2,'fsc_pool_ag',vegn_fsc_pool_ag_ptr, &
        'intermediate pool for AG fast soil carbon input', 'kg C/m2')
@@ -869,23 +876,23 @@ subroutine save_vegn_restart(tile_dim_length,timestamp)
 
   ! monthly-mean values
   call add_tile_data(restart2,'tc_av', vegn_tc_av_ptr,'average canopy air temperature','degK')
-  call add_tile_data(restart2,'theta_av_phen', vegn_theta_av_phen_ptr,'average soil moisture for phenology', 'none')
-  call add_tile_data(restart2,'theta_av_fire', vegn_theta_av_fire_ptr,'average soil moisture for fire', 'none')
-  call add_tile_data(restart2,'psist_av', vegn_psist_av_ptr,'average soil-water-stress index', 'none')
+  call add_tile_data(restart2,'theta_av_phen', vegn_theta_av_phen_ptr,'average soil moisture for phenology')
+  call add_tile_data(restart2,'theta_av_fire', vegn_theta_av_fire_ptr,'average soil moisture for fire')
+  call add_tile_data(restart2,'psist_av', vegn_psist_av_ptr,'average soil-water-stress index')
   call add_tile_data(restart2,'tsoil_av', vegn_tsoil_av_ptr,'average bulk soil temperature for soil carbon','degK')
   call add_tile_data(restart2,'precip_av', vegn_precip_av_ptr,'average total precipitation','kg/(m2 s)')
-  call add_tile_data(restart2,'lambda', vegn_lambda_ptr,'dryness parameter', 'none')
+  call add_tile_data(restart2,'lambda', vegn_lambda_ptr,'dryness parameter')
   call add_tile_data(restart2,'fuel', vegn_fuel_ptr,'fuel density','kg C/m2')
   ! annual-mean values
   call add_tile_data(restart2,'t_ann', vegn_t_ann_ptr,'average annual canopy air temperature','degK')
   call add_tile_data(restart2,'t_cold', vegn_t_cold_ptr,'average canopy air temperature of coldest month','degK')
   call add_tile_data(restart2,'p_ann', vegn_p_ann_ptr,'average annual precipitation','kg/(m2 s)')
-  call add_tile_data(restart2,'ncm', vegn_ncm_ptr,'number of cold months', 'none')
+  call add_tile_data(restart2,'ncm', vegn_ncm_ptr,'number of cold months')
   ! accumulated values for annual averaging
   call add_tile_data(restart2,'t_ann_acm', vegn_t_ann_acm_ptr,'accumulated annual canopy air temperature','degK')
   call add_tile_data(restart2,'t_cold_acm', vegn_t_cold_acm_ptr,'accumulated temperature of coldest month','degK')
   call add_tile_data(restart2,'p_ann_acm', vegn_p_ann_acm_ptr,'accumulated precipitation','kg/(m2 s)')
-  call add_tile_data(restart2,'ncm_acm', vegn_ncm_acm_ptr,'accumulated number of cold months', 'none')
+  call add_tile_data(restart2,'ncm_acm', vegn_ncm_acm_ptr,'accumulated number of cold months')
 
   ! burned carbon pool and rate
   call add_tile_data(restart2,'csmoke_pool',vegn_csmoke_pool_ptr,'carbon lost through fires', 'kg C/m2')
@@ -1840,5 +1847,10 @@ DEFINE_COHORT_ACCESSOR(real,wl)
 DEFINE_COHORT_ACCESSOR(real,ws)
 
 DEFINE_COHORT_ACCESSOR(real,height)
+
+! for reproducibility across mid-day restarts
+DEFINE_COHORT_ACCESSOR(real,carbon_gain)
+DEFINE_COHORT_ACCESSOR(real,bwood_gain)
+DEFINE_COHORT_ACCESSOR(real,npp_previous_day_tmp)
 
 end module vegetation_mod

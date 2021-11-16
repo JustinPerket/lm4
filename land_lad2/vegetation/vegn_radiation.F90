@@ -1,21 +1,3 @@
-!***********************************************************************
-!*                   GNU Lesser General Public License
-!*
-!* This file is part of the GFDL Land Model 4 (LM4).
-!*
-!* LM4 is free software: you can redistribute it and/or modify it under
-!* the terms of the GNU Lesser General Public License as published by
-!* the Free Software Foundation, either version 3 of the License, or (at
-!* your option) any later version.
-!*
-!* LM4 is distributed in the hope that it will be useful, but WITHOUT
-!* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-!* FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
-!* for more details.
-!*
-!* You should have received a copy of the GNU Lesser General Public
-!* License along with LM4.  If not, see <http://www.gnu.org/licenses/>.
-!***********************************************************************
 module vegn_radiation_mod
 
 use fms_mod,            only : error_mesg, FATAL
@@ -236,7 +218,7 @@ subroutine vegn_rad_properties_twostream( cohort, cosz, &
   end select
 
   ! get the snow radiative properties for current canopy temperature
-  call snow_radiation ( cohort%Tv, cosz, .FALSE., -1, snow_refl_dir, snow_refl_dif, snow_refl_lw, snow_emis )
+  call snow_radiation ( cohort%Tv, cosz, .FALSE., snow_refl_dir, snow_refl_dif, snow_refl_lw, snow_emis )
 
   sp = cohort%species
   do i = 1, NBANDS

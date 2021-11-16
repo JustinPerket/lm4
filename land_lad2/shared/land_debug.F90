@@ -1,27 +1,14 @@
-!***********************************************************************
-!*                   GNU Lesser General Public License
-!*
-!* This file is part of the GFDL Land Model 4 (LM4).
-!*
-!* LM4 is free software: you can redistribute it and/or modify it under
-!* the terms of the GNU Lesser General Public License as published by
-!* the Free Software Foundation, either version 3 of the License, or (at
-!* your option) any later version.
-!*
-!* LM4 is distributed in the hope that it will be useful, but WITHOUT
-!* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-!* FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
-!* for more details.
-!*
-!* You should have received a copy of the GNU Lesser General Public
-!* License along with LM4.  If not, see <http://www.gnu.org/licenses/>.
-!***********************************************************************
 module land_debug_mod
 
-use mpp_mod, only: mpp_max, input_nml_file
+#ifdef INTERNAL_FILE_NML
+use mpp_mod, only: input_nml_file
+#else
+use fms_mod, only: open_namelist_file
+#endif
+use mpp_mod, only: mpp_max
 use constants_mod, only: PI
-use fms_mod, only: error_mesg, check_nml_error, stdlog, &
-      mpp_pe, mpp_npes, mpp_root_pe, string, FATAL, WARNING, NOTE
+use fms_mod, only: error_mesg, file_exist, check_nml_error, stdlog, &
+     close_file, mpp_pe, mpp_npes, mpp_root_pe, string, FATAL, WARNING, NOTE
 use time_manager_mod, only : &
      time_type, get_date, set_date, operator(<=), operator(>=)
 use grid_mod, only: get_grid_ntiles
@@ -95,11 +82,11 @@ integer              :: mosaic_tile_sg = 0, mosaic_tile_ug = 0
 integer, allocatable :: curr_i(:), curr_j(:), curr_k(:), curr_l(:)
 type(time_type)      :: start_watch_time, stop_watch_time
 character(128)       :: fixed_format
+integer              :: watch_point_lindex = 0  ! watch point index in unstructured grid.
 
 !---- namelist ---------------------------------------------------------------
 integer :: watch_point(4)=(/0,0,0,1/) ! coordinates of the point of interest,
            ! i,j,tile,mosaic_tile
-integer :: watch_point_lindex = 0  ! watch point index in unstructure grid.
 integer :: start_watching(6) = (/    1, 1, 1, 0, 0, 0 /)
 integer :: stop_watching(6)  = (/ 9999, 1, 1, 0, 0, 0 /)
 logical :: watch_conservation = .FALSE. ! if true, conservation check reports are
@@ -136,10 +123,31 @@ subroutine land_debug_init()
   call log_version(version, module_name, &
   __FILE__)
 
+#ifdef INTERNAL_FILE_NML
   read (input_nml_file, nml=land_debug_nml, iostat=io)
   ierr = check_nml_error(io, 'land_debug_nml')
   read (input_nml_file, nml=land_conservation_nml, iostat=io)
   ierr = check_nml_error(io, 'land_conservation_nml')
+#else
+  if (file_exist('input.nml')) then
+     unit = open_namelist_file()
+     ierr = 1;
+     do while (ierr /= 0)
+        read (unit, nml=land_debug_nml, iostat=io, end=10)
+        ierr = check_nml_error (io, 'land_debug_nml')
+     enddo
+10   continue
+     call close_file (unit)
+     unit = open_namelist_file()
+     ierr = 1;
+     do while (ierr /= 0)
+        read (unit, nml=land_conservation_nml, iostat=io, end=11)
+        ierr = check_nml_error (io, 'land_conservation_nml')
+     enddo
+11   continue
+     call close_file (unit)
+  endif
+#endif
   if (mpp_pe() == mpp_root_pe()) then
      unit=stdlog()
      write(unit, nml=land_debug_nml)
@@ -169,11 +177,11 @@ subroutine land_debug_init()
   mosaic_tile_ug = lnd%ug_face
   watch_point_lindex = 0
   do l = lnd%ls, lnd%le
-     if(watch_point(1) == lnd%i_index(l) .AND. watch_point(2) == lnd%j_index(l)) then
+     if ( watch_point(1) == lnd%i_index(l) .AND. &
+          watch_point(2) == lnd%j_index(l)       ) then
         watch_point_lindex = l
      endif
   enddo
-  call mpp_max(watch_point_lindex)
 
 end subroutine land_debug_init
 
@@ -218,8 +226,9 @@ subroutine set_current_point_ug(l,k)
   curr_k(thread) = k; curr_l(thread) = l
 
   current_debug_level(thread) = 0
-  if ( watch_point_lindex==l.and. &
-       watch_point(3)==k.and. &
+  if ( watch_point(1)==curr_i(thread).and. &
+       watch_point(2)==curr_j(thread).and. &
+       watch_point(3)==curr_k(thread).and. &
        watch_point(4)==mosaic_tile_ug) then
      current_debug_level(thread) = 1
   endif

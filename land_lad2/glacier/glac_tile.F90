@@ -1,26 +1,13 @@
-!***********************************************************************
-!*                   GNU Lesser General Public License
-!*
-!* This file is part of the GFDL Land Model 4 (LM4).
-!*
-!* LM4 is free software: you can redistribute it and/or modify it under
-!* the terms of the GNU Lesser General Public License as published by
-!* the Free Software Foundation, either version 3 of the License, or (at
-!* your option) any later version.
-!*
-!* LM4 is distributed in the hope that it will be useful, but WITHOUT
-!* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-!* FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
-!* for more details.
-!*
-!* You should have received a copy of the GNU Lesser General Public
-!* License along with LM4.  If not, see <http://www.gnu.org/licenses/>.
-!***********************************************************************
 module glac_tile_mod
 #include <fms_platform.h>
 
-use fms_mod, only : check_nml_error, stdlog
+#ifdef INTERNAL_FILE_NML
 use mpp_mod, only: input_nml_file
+#else
+use fms_mod, only: open_namelist_file
+#endif
+
+use fms_mod, only : file_exist, check_nml_error, close_file, stdlog
 use constants_mod, only : pi, tfreeze, hlf
 use land_constants_mod, only : NBANDS
 use land_io_mod, only : init_cover_field
@@ -226,8 +213,21 @@ subroutine read_glac_data_namelist(glac_n_lev, glac_dz)
 
   call log_version(version, module_name, &
   __FILE__)
-  read (input_nml_file, nml=glac_data_nml, iostat=io)
-  ierr = check_nml_error(io, 'glac_data_nml')
+#ifdef INTERNAL_FILE_NML
+     read (input_nml_file, nml=glac_data_nml, iostat=io)
+     ierr = check_nml_error(io, 'glac_data_nml')
+#else
+  if (file_exist('input.nml')) then
+     unit = open_namelist_file()
+     ierr = 1;
+     do while (ierr /= 0)
+        read (unit, nml=glac_data_nml, iostat=io, end=10)
+        ierr = check_nml_error (io, 'glac_data_nml')
+     enddo
+10   continue
+     call close_file (unit)
+  endif
+#endif
   unit=stdlog()
   write (unit, nml=glac_data_nml)
 

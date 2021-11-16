@@ -1,29 +1,17 @@
-!***********************************************************************
-!*                   GNU Lesser General Public License
-!*
-!* This file is part of the GFDL Land Model 4 (LM4).
-!*
-!* LM4 is free software: you can redistribute it and/or modify it under
-!* the terms of the GNU Lesser General Public License as published by
-!* the Free Software Foundation, either version 3 of the License, or (at
-!* your option) any later version.
-!*
-!* LM4 is distributed in the hope that it will be useful, but WITHOUT
-!* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-!* FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
-!* for more details.
-!*
-!* You should have received a copy of the GNU Lesser General Public
-!* License along with LM4.  If not, see <http://www.gnu.org/licenses/>.
-!***********************************************************************
 ! ============================================================================
 ! glac model module
 ! ============================================================================
 module glacier_mod
 
-use fms_mod, only : error_mesg, check_nml_error, stdlog, &
-     mpp_pe, mpp_root_pe, FATAL, NOTE
+#ifdef INTERNAL_FILE_NML
 use mpp_mod, only: input_nml_file
+#else
+use fms_mod, only: open_namelist_file
+#endif
+
+use fms_mod, only : error_mesg, file_exist, check_nml_error, stdlog, close_file, &
+     mpp_pe, mpp_root_pe, FATAL, NOTE
+
 use time_manager_mod,   only: time_type_to_real
 use diag_manager_mod,   only: diag_axis_init
 use constants_mod,      only: tfreeze, hlv, hlf, dens_h2o
@@ -101,8 +89,21 @@ subroutine read_glac_namelist()
 
   call log_version(version, module_name, &
   __FILE__)
-  read (input_nml_file, nml=glac_nml, iostat=io)
-  ierr = check_nml_error(io, 'glac_nml')
+#ifdef INTERNAL_FILE_NML
+     read (input_nml_file, nml=glac_nml, iostat=io)
+     ierr = check_nml_error(io, 'glac_nml')
+#else
+  if (file_exist('input.nml')) then
+     unit = open_namelist_file()
+     ierr = 1;
+     do while (ierr /= 0)
+        read (unit, nml=glac_nml, iostat=io, end=10)
+        ierr = check_nml_error (io, 'glac_nml')
+     enddo
+10   continue
+     call close_file (unit)
+  endif
+#endif
   if (mpp_pe() == mpp_root_pe()) then
      unit = stdlog()
      write (unit, nml=glac_nml)
@@ -128,7 +129,7 @@ subroutine glac_init (id_ug)
   type(land_tile_type), pointer :: tile ! pointer to current tile
   type(land_restart_type) :: restart
   logical :: restart_exists
-  character(*), parameter :: restart_file_name='INPUT/glac.nc'
+  character(*), parameter :: restart_file_name='INPUT/glac.res.nc'
 
   module_is_initialized = .TRUE.
   delta_time = time_type_to_real(lnd%dt_fast)
@@ -203,14 +204,14 @@ subroutine save_glac_restart (tile_dim_length, timestamp)
   call error_mesg('glac_end','writing NetCDF restart',NOTE)
 ! must set domain so that io_domain is available
 ! Note that filename is updated for tile & rank numbers during file creation
-  filename = 'RESTART/'//trim(timestamp)//'glac.nc'
+  filename = trim(timestamp)//'glac.res.nc'
   call init_land_restart(restart, filename, glac_tile_exists, tile_dim_length)
-  call add_restart_axis(restart,'zfull',zfull(1:num_l),.false.,"Z",'m','full level')
+  call add_restart_axis(restart,'zfull',zfull(1:num_l),'Z','m','full level',sense=-1)
 
   ! Output data provides signature
-  call add_tile_data(restart,'temp', 'zfull          ', glac_temp_ptr, longname='glacier temperature',  units='degrees_K')
-  call add_tile_data(restart,'wl',   'zfull          ', glac_wl_ptr,   longname='liquid water content', units='kg/m2')
-  call add_tile_data(restart,'ws',   'zfull          ', glac_ws_ptr,   longname='solid water content',  units='kg/m2')
+  call add_tile_data(restart,'temp', 'zfull', glac_temp_ptr, longname='glacier temperature',  units='degrees_K')
+  call add_tile_data(restart,'wl',   'zfull', glac_wl_ptr,   longname='liquid water content', units='kg/m2')
+  call add_tile_data(restart,'ws',   'zfull', glac_ws_ptr,   longname='solid water content',  units='kg/m2')
 
   ! save performs io domain aggregation through mpp_io as with regular domain data
   call save_land_restart(restart)

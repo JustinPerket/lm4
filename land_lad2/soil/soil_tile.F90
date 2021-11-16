@@ -1,27 +1,19 @@
-!***********************************************************************
-!*                   GNU Lesser General Public License
-!*
-!* This file is part of the GFDL Land Model 4 (LM4).
-!*
-!* LM4 is free software: you can redistribute it and/or modify it under
-!* the terms of the GNU Lesser General Public License as published by
-!* the Free Software Foundation, either version 3 of the License, or (at
-!* your option) any later version.
-!*
-!* LM4 is distributed in the hope that it will be useful, but WITHOUT
-!* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-!* FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
-!* for more details.
-!*
-!* You should have received a copy of the GNU Lesser General Public
-!* License along with LM4.  If not, see <http://www.gnu.org/licenses/>.
-!***********************************************************************
 module soil_tile_mod
 #include <fms_platform.h>
 
-use fms_mod, only : check_nml_error, &
-     stdlog, error_mesg, FATAL
+#ifdef INTERNAL_FILE_NML
 use mpp_mod, only: input_nml_file
+#else
+use fms_mod, only: open_namelist_file
+#endif
+
+use mpp_io_mod, only : &
+     mpp_open, mpp_close, MPP_NETCDF, MPP_MULTI, MPP_SINGLE, MPP_RDONLY, &
+     mpp_get_fields, mpp_get_atts, mpp_get_field_index, fieldtype, &
+     axistype, mpp_get_info
+
+use fms_mod, only : file_exist, check_nml_error, &
+     close_file, stdlog, read_data, error_mesg, FATAL
 use constants_mod, only : &
      pi, tfreeze, rvgas, grav, dens_h2o, hlf, epsln
 use land_constants_mod, only : BAND_VIS, BAND_NIR, NBANDS
@@ -33,9 +25,6 @@ use land_data_mod, only : log_version
 use land_debug_mod, only : check_var_range
 use tiling_input_types_mod, only : soil_predefined_type
 use land_debug_mod, only : is_watch_point
-
-use fms2_io_mod, only: close_file, FmsNetcdfFile_t, get_variable_size, &
-                       open_file, read_data, get_variable_num_dimensions
 
 implicit none
 private
@@ -567,15 +556,26 @@ subroutine read_soil_data_namelist(soil_num_l, soil_dz, soil_single_geo, &
   integer :: i, rcode, input_unit, varid, dimids(3)
   integer :: ndim, nvar, natt, timelen
 
-  type(FmsNetcdfFile_t) :: fileobj
-  logical :: exists
-  integer, dimension(:), allocatable :: dimlens
-  integer :: ndims
+  type(fieldtype), allocatable :: Fields(:)
+  type(axistype),  allocatable :: axes(:)
 
   call log_version(version, module_name, &
   __FILE__)
+#ifdef INTERNAL_FILE_NML
   read (input_nml_file, nml=soil_data_nml, iostat=io)
   ierr = check_nml_error(io, 'soil_data_nml')
+#else
+  if (file_exist('input.nml')) then
+     unit = open_namelist_file()
+     ierr = 1;
+     do while (ierr /= 0)
+        read (unit, nml=soil_data_nml, iostat=io, end=10)
+        ierr = check_nml_error (io, 'soil_data_nml')
+     enddo
+10   continue
+     call close_file (unit)
+  endif
+#endif
   unit=stdlog()
   write(unit, nml=soil_data_nml)
 
@@ -636,29 +636,24 @@ subroutine read_soil_data_namelist(soil_num_l, soil_dz, soil_single_geo, &
 
   if (gw_option==GW_HILL_AR5.and..not.use_single_geo) then
      num_storage_pts = 26
-     exists = open_file(fileobj, "INPUT/geohydrology_table.nc", "read")
-     if (.not. exists) then
-       call error_mesg("read_soil_data_namelist", &
-                       "file INPUT/geohydrology_table.nc does not exist.", &
-                       fatal)
-     endif
-     call read_data(fileobj, "gw_flux_norm", gw_flux_table)
-     call read_data(fileobj, "gw_area_norm", gw_area_table)
-     call close_file(fileobj)
+     call read_data('INPUT/geohydrology_table.nc', 'gw_flux_norm', &
+                 gw_flux_table, no_domain=.true.)
+     call read_data('INPUT/geohydrology_table.nc', 'gw_area_norm', &
+                 gw_area_table, no_domain=.true.)
   else if (gw_option==GW_HILL) then
-     exists = open_file(fileobj, 'INPUT/geohydrology_table_2a2n.nc', "read")
-     if (.not. exists) then
-       call error_mesg("read_soil_data_namelist", &
-                       "file INPUT/geohydrology_table_2a2n.nc does not exist.", &
-                       fatal)
-     endif
-     ndims = get_variable_num_dimensions(fileobj, "log_rho_a0n1")
-     allocate(dimlens(ndims))
-     call get_variable_size(fileobj, "log_rho_a0n1", dimlens)
-     num_storage_pts = dimlens(1)
-     num_tau_pts = dimlens(2)
-     num_zeta_pts = dimlens(3)
-     deallocate(dimlens)
+     call mpp_open(input_unit, 'INPUT/geohydrology_table_2a2n.nc', action=MPP_RDONLY, form=MPP_NETCDF, &
+          threading=MPP_MULTI, fileset=MPP_SINGLE, iostat=ierr)
+     call mpp_get_info(input_unit,ndim,nvar,natt,timelen)
+     allocate(Fields(nvar))
+     call mpp_get_fields(input_unit, Fields)
+     call mpp_get_atts(Fields(mpp_get_field_index(Fields, 'log_rho_a0n1')), ndim=ndim)
+     allocate (axes(ndim))
+     call mpp_get_atts(Fields(mpp_get_field_index(Fields, 'log_rho_a0n1')), axes=axes)
+     call mpp_get_atts(axes(1), len=num_storage_pts)
+     call mpp_get_atts(axes(2), len=num_tau_pts)
+     call mpp_get_atts(axes(3), len=num_zeta_pts)
+     call mpp_close(input_unit)
+     deallocate (Fields, axes)
 
      allocate (log_rho_table(num_storage_pts, num_tau_pts, num_zeta_pts, 2, 2))
      allocate (log_deficit_list(num_storage_pts))
@@ -666,17 +661,24 @@ subroutine read_soil_data_namelist(soil_num_l, soil_dz, soil_single_geo, &
      allocate (log_zeta_s(num_zeta_pts))
 
      if (.not.retro_a0n1) then
-         call read_data(fileobj, "log_rho_a0n1", log_rho_table(:,:,:,1,1))
+         call read_data('INPUT/geohydrology_table_2a2n.nc', 'log_rho_a0n1', &
+                 log_rho_table(:,:,:,1,1), no_domain=.true.)
      else
-         call read_data(fileobj, "retro_log_rho_a0n1", log_rho_table(:,:,:,1,1))
+         call read_data('INPUT/geohydrology_table_2a2n.nc', 'retro_log_rho_a0n1', &
+                 log_rho_table(:,:,:,1,1), no_domain=.true.)
      endif
-     call read_data(fileobj, "log_rho_a0n2", log_rho_table(:,:,:,1,2))
-     call read_data(fileobj, "log_rho_a1n1", log_rho_table(:,:,:,2,1))
-     call read_data(fileobj, "log_rho_a1n2", log_rho_table(:,:,:,2,2))
-     call read_data(fileobj, "log_deficit",  log_deficit_list)
-     call read_data(fileobj, "log_tau", log_tau)
-     call read_data(fileobj, "log_zeta_s", log_zeta_s)
-     call close_file(fileobj)
+     call read_data('INPUT/geohydrology_table_2a2n.nc', 'log_rho_a0n2', &
+             log_rho_table(:,:,:,1,2), no_domain=.true.)
+     call read_data('INPUT/geohydrology_table_2a2n.nc', 'log_rho_a1n1', &
+             log_rho_table(:,:,:,2,1), no_domain=.true.)
+     call read_data('INPUT/geohydrology_table_2a2n.nc', 'log_rho_a1n2', &
+             log_rho_table(:,:,:,2,2), no_domain=.true.)
+     call read_data('INPUT/geohydrology_table_2a2n.nc', 'log_deficit', &
+             log_deficit_list, no_domain=.true.)
+     call read_data('INPUT/geohydrology_table_2a2n.nc', 'log_tau', &
+             log_tau, no_domain=.true.)
+     call read_data('INPUT/geohydrology_table_2a2n.nc', 'log_zeta_s', &
+             log_zeta_s, no_domain=.true.)
   endif
 
 

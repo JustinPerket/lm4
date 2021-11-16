@@ -1,21 +1,3 @@
-!***********************************************************************
-!*                   GNU Lesser General Public License
-!*
-!* This file is part of the GFDL Land Model 4 (LM4).
-!*
-!* LM4 is free software: you can redistribute it and/or modify it under
-!* the terms of the GNU Lesser General Public License as published by
-!* the Free Software Foundation, either version 3 of the License, or (at
-!* your option) any later version.
-!*
-!* LM4 is distributed in the hope that it will be useful, but WITHOUT
-!* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-!* FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
-!* for more details.
-!*
-!* You should have received a copy of the GNU Lesser General Public
-!* License along with LM4.  If not, see <http://www.gnu.org/licenses/>.
-!***********************************************************************
 ! ============================================================================
 ! updates carbon pools and rates on the fast time scale
 ! ============================================================================
@@ -211,7 +193,7 @@ subroutine vegn_carbon_int(vegn, soil, soilt, theta, diag)
      else
         md_alive = 0
         md_leaf  = 0
-	md_froot = 0
+        md_froot = 0
      endif
 
      ! compute branch and coarse wood losses for tree types
@@ -258,10 +240,10 @@ subroutine vegn_carbon_int(vegn, soil, soilt, theta, diag)
         soil%leaflitter_ssc_in=soil%leaflitter_ssc_in+(1-fsc_liv)*md_leaf
         soil%coarsewoodlitter_fsc_in=soil%coarsewoodlitter_fsc_in +    fsc_wood *md_wood*agf_bs
         soil%coarsewoodlitter_ssc_in=soil%coarsewoodlitter_ssc_in + (1-fsc_wood)*md_wood*agf_bs
-	!ssc_in and fsc_in updated in add_root_litter
+        !ssc_in and fsc_in updated in add_root_litter
         call add_root_litter(soil,vegn,(/fsc_froot*md_froot + fsc_wood*md_wood*(1-agf_bs),&
-					(1-fsc_froot)*md_froot + (1-fsc_wood)*md_wood*(1-agf_bs),0.0/))
-	if (is_watch_point()) then
+                                        (1-fsc_froot)*md_froot + (1-fsc_wood)*md_wood*(1-agf_bs),0.0/))
+        if (is_watch_point()) then
            call debug_pool(soil%leafLitter,      'leafLitter (after)'      )
            call debug_pool(soil%coarseWoodLitter,'coarseWoodLitter (after)')
         endif
@@ -476,7 +458,7 @@ subroutine vegn_phenology(vegn, soil)
      if(is_watch_point())then
         write(*,*)'####### vegn_phenology #######'
         __DEBUG4__(vegn%theta_av_phen, wilt, spdata(cc%species)%cnst_crit_phen, spdata(cc%species)%fact_crit_phen)
-	__DEBUG2__(vegn%psist_av, spdata(cc%species)%psi_stress_crit_phen)
+        __DEBUG2__(vegn%psist_av, spdata(cc%species)%psi_stress_crit_phen)
         __DEBUG1__(cc%species)
         __DEBUG2__(vegn%tc_av,spdata(cc%species)%tc_crit)
      endif
@@ -492,9 +474,9 @@ subroutine vegn_phenology(vegn, soil)
         theta_crit = spdata(cc%species)%cnst_crit_phen &
               + wilt*spdata(cc%species)%fact_crit_phen
         theta_crit = max(0.0,min(1.0, theta_crit))
-	psi_stress_crit = spdata(cc%species)%psi_stress_crit_phen
+        psi_stress_crit = spdata(cc%species)%psi_stress_crit_phen
         if (      (psi_stress_crit <= 0. .and. vegn%theta_av_phen < theta_crit) &
-	     .or. (psi_stress_crit  > 0. .and. vegn%psist_av > psi_stress_crit) &
+             .or. (psi_stress_crit  > 0. .and. vegn%psist_av > psi_stress_crit) &
              .or. (vegn%tc_av < spdata(cc%species)%tc_crit) ) then
            cc%status = LEAF_OFF; ! set status to indicate leaf drop
            cc%leaf_age = 0;

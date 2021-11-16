@@ -1,21 +1,3 @@
-!***********************************************************************
-!*                   GNU Lesser General Public License
-!*
-!* This file is part of the GFDL Land Model 4 (LM4).
-!*
-!* LM4 is free software: you can redistribute it and/or modify it under
-!* the terms of the GNU Lesser General Public License as published by
-!* the Free Software Foundation, either version 3 of the License, or (at
-!* your option) any later version.
-!*
-!* LM4 is distributed in the hope that it will be useful, but WITHOUT
-!* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-!* FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
-!* for more details.
-!*
-!* You should have received a copy of the GNU Lesser General Public
-!* License along with LM4.  If not, see <http://www.gnu.org/licenses/>.
-!***********************************************************************
 ! ============================================================================
 ! hillslope model module
 ! ============================================================================
@@ -23,8 +5,14 @@ module hillslope_mod
 
 #include "../shared/debug.inc"
 
-use mpp_mod, only: mpp_pe, mpp_root_pe, input_nml_file
-use fms_mod, only: error_mesg, check_nml_error, &
+#ifdef INTERNAL_FILE_NML
+use mpp_mod, only: input_nml_file
+#else
+use fms_mod, only: open_namelist_file
+#endif
+
+use mpp_mod, only: mpp_pe, mpp_root_pe
+use fms_mod, only: error_mesg, file_exist, close_file, check_nml_error, &
      stdlog, FATAL, NOTE, WARNING
 
 use land_tile_mod, only : land_tile_map, land_tile_type, land_tile_enum_type, &
@@ -37,7 +25,9 @@ use land_data_mod, only : lnd, log_version
 use land_io_mod, only : read_field
 use land_tile_io_mod, only: land_restart_type, &
      init_land_restart, open_land_restart, save_land_restart, free_land_restart, &
-     add_restart_axis, add_int_tile_data, get_int_tile_data
+     add_restart_axis, add_int_tile_data, get_int_tile_data, &
+     print_netcdf_error
+use nf_utils_mod,  only : nfu_inq_dim
 use land_debug_mod, only : is_watch_point, is_watch_cell, set_current_point
 use land_transitions_mod, only : do_landuse_change
 use vegn_harvesting_mod , only : do_harvesting
@@ -45,8 +35,6 @@ use hillslope_tile_mod , only : register_hlsp_selectors
 use constants_mod, only : tfreeze
 use soil_tile_mod, only : gw_option, GW_TILED, initval, soil_tile_type, &
      gw_scale_length, gw_scale_relief
-
-use fms2_io_mod, only: close_file, FmsNetcdfFile_t, get_dimension_size, open_file
 
 implicit none
 private
@@ -175,6 +163,10 @@ real, private, allocatable :: init_wt_loc (:,:,:) ! water table depth to init by
 
 ! ==== end of module variables ===============================================
 
+! ==== NetCDF declarations ===================================================
+include 'netcdf.inc'
+#define __NF_ASRT__(x) call print_netcdf_error((x),module_name,__LINE__)
+
 contains
 
 ! ============================================================================
@@ -186,8 +178,21 @@ subroutine read_hlsp_namelist()
 
   call log_version(version, module_name, &
   __FILE__)
+#ifdef INTERNAL_FILE_NML
   read (input_nml_file, nml=hlsp_nml, iostat=io)
   ierr = check_nml_error(io, 'hlsp_nml')
+#else
+  if (file_exist('input.nml')) then
+     unit = open_namelist_file()
+     ierr = 1;
+     do while (ierr /= 0)
+        read (unit, nml=hlsp_nml, iostat=io, end=10)
+        ierr = check_nml_error (io, 'hlsp_nml')
+     enddo
+10   continue
+     call close_file (unit)
+  endif
+#endif
   if (mpp_pe() == mpp_root_pe()) then
      unit=stdlog()
      write(unit, nml=hlsp_nml)
@@ -243,12 +248,11 @@ subroutine read_hillslope_surfdat ( ls, le, num_topo_hlsps, frac_topo_hlsps, soi
   integer, allocatable :: ibuffer(:,:)
   real   , allocatable :: rbuffer(:,:)
   integer :: ierr, ncid, totnumhlsps ! err, file id and tot # of hillslopes per gcell on surfdata
-  type(FmsNetcdfFile_t) :: fileobj
-  logical :: exists
 
   ! Check length of nhlsps dimension on input file.
-  exists = open_file(fileobj, hillslope_surfdata, "read")
-  call get_dimension_size(fileobj, hlsp_surf_dimname, totnumhlsps)
+  __NF_ASRT__(nf_open(hillslope_surfdata, NF_NOWRITE,ncid))
+  ierr = nfu_inq_dim(ncid, hlsp_surf_dimname, totnumhlsps)
+  __NF_ASRT__(nf_close(ncid))
   !write(*,*)'totnumhlsps = ',totnumhlsps,', max_num_topo_hlsps = ', &
   !      max_num_topo_hlsps
   if (ierr > 0) call error_mesg(module_name, 'Error reading file '// hillslope_surfdata // ','// &
@@ -267,57 +271,53 @@ subroutine read_hillslope_surfdat ( ls, le, num_topo_hlsps, frac_topo_hlsps, soi
                      'is not on the native grid.', NOTE)
   ! Note: this function is not currently a robust "nearest" interpolation for cubic-sphere
   ! grids and will need to be updated.
-  if (.not. exists) then
-    call error_mesg("read_hillslope_surfdat", trim(hillslope_surfdata)//" does not exist.", &
-                    fatal)
-  endif
 
-  call read_field( fileobj, 'NUM_TOPO_HLSPS', num_topo_hlsps, interp='nearest' )
+  call read_field( hillslope_surfdata, 'NUM_TOPO_HLSPS', num_topo_hlsps, interp='nearest' )
 
-  call read_field( fileobj, 'FRAC_TOPO_HLSPS', rbuffer, interp='nearest' )
+  call read_field( hillslope_surfdata, 'FRAC_TOPO_HLSPS', rbuffer, interp='nearest' )
   frac_topo_hlsps(:,:) = rbuffer(:,1:max_num_topo_hlsps)
 
   if (.not. use_geohydrodata) then
-     call read_field( fileobj, 'SOIL_E_DEPTH', rbuffer, interp=hlsp_interpmethod )
+     call read_field( hillslope_surfdata, 'SOIL_E_DEPTH', rbuffer, interp=hlsp_interpmethod )
      soil_e_depth(:,:) = rbuffer(:,1:max_num_topo_hlsps)
   else
      soil_e_depth(:,:) = initval ! will not be used
   end if
-  call read_field( fileobj, 'MICROTOPO', rbuffer, interp=hlsp_interpmethod )
+  call read_field( hillslope_surfdata, 'MICROTOPO', rbuffer, interp=hlsp_interpmethod )
   microtopo(:,:) = rbuffer(:,1:max_num_topo_hlsps)
 
-  call read_field( fileobj, 'HLSP_LENGTH', rbuffer, interp=hlsp_interpmethod )
+  call read_field( hillslope_surfdata, 'HLSP_LENGTH', rbuffer, interp=hlsp_interpmethod )
   hlsp_length(:,:) = rbuffer(:,1:max_num_topo_hlsps)
   if (use_geohydrodata) hlsp_length(:,:) = hlsp_length(:,:)*gw_scale_length
 
-  call read_field( fileobj, 'HLSP_SLOPE', rbuffer, interp=hlsp_interpmethod )
+  call read_field( hillslope_surfdata, 'HLSP_SLOPE', rbuffer, interp=hlsp_interpmethod )
   ! Hillslope elevation at top divided by hillslope length
   hlsp_slope(:,:) = rbuffer(:,1:max_num_topo_hlsps)
   if (use_geohydrodata) hlsp_slope(:,:) = hlsp_slope(:,:)*gw_scale_relief
 
-  call read_field( fileobj, 'HLSP_SLOPE_EXP', rbuffer, interp=hlsp_interpmethod )
+  call read_field( hillslope_surfdata, 'HLSP_SLOPE_EXP', rbuffer, interp=hlsp_interpmethod )
   ! Hillslope profile will follow equation z = H(x/L)^a, where a=hlsp_slope_exp,
   ! H = max elevation, and L = max length from stream.
   hlsp_slope_exp(:,:) = rbuffer(:,1:max_num_topo_hlsps)
 
-!  call read_field( fileobj, 'HLSP_STREAM_WIDTH', rbuffer, interp=hlsp_interpmethod )
+!  call read_field( hillslope_surfdata, 'HLSP_STREAM_WIDTH', rbuffer, interp=hlsp_interpmethod )
 !  hlsp_stream_width(:,:,:) = rbuffer(:,:,1:max_num_topo_hlsps)
 
-  call read_field( fileobj, 'HLSP_TOP_WIDTH', rbuffer, interp=hlsp_interpmethod )
+  call read_field( hillslope_surfdata, 'HLSP_TOP_WIDTH', rbuffer, interp=hlsp_interpmethod )
   hlsp_top_width(:,:) = rbuffer(:,1:max_num_topo_hlsps)
 
   if (.not. use_geohydrodata) then
-     call read_field( fileobj, 'BEDROCK_KSAT', rbuffer, interp=hlsp_interpmethod )
+     call read_field( hillslope_surfdata, 'BEDROCK_KSAT', rbuffer, interp=hlsp_interpmethod )
      k_sat_gw(:,:) = rbuffer(:,1:max_num_topo_hlsps)
   else
      k_sat_gw(:,:) = initval ! will not be used
   end if
 
   if (present(soiltype)) then
-     call read_field( fileobj, 'SOILTYPE', ibuffer, interp='nearest')
+     call read_field( hillslope_surfdata, 'SOILTYPE', ibuffer, interp='nearest')
      soiltype(:,:) = ibuffer(:,1:max_num_topo_hlsps)
   end if
-  call close_file(fileobj)
+
   deallocate(rbuffer, ibuffer)
 
 end subroutine read_hillslope_surfdat
