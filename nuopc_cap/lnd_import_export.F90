@@ -3,10 +3,9 @@
 
 module lnd_import_export
 
-  use ESMF
-  use NUOPC
   use ESMF                    , only : ESMF_GridComp, ESMF_State, ESMF_Mesh, ESMF_StateGet
-  use ESMF                    , only : ESMF_KIND_R8, ESMF_SUCCESS, ESMF_MAXSTR, ESMF_LOGMSG_INFO
+  use ESMF                    , only : ESMF_KIND_R8, ESMF_SUCCESS, ESMF_END_ABORT, ESMF_Finalize
+  use ESMF                    , only : ESMF_MAXSTR, ESMF_LOGMSG_INFO
   use ESMF                    , only : ESMF_LogWrite, ESMF_LOGMSG_ERROR, ESMF_LogFoundError, ESMF_FAILURE
   use ESMF                    , only : ESMF_STATEITEM_NOTFOUND, ESMF_StateItem_Flag
   use ESMF                    , only : operator(/=), operator(==)
@@ -762,7 +761,7 @@ contains
        call ESMF_FieldGet(lfield, farrayPtr=fldptr2d, rc=rc)
        if (ChkErr(rc,__LINE__,u_FILE_u)) return
     else
-      call ESMF_LogWrite(trim(subname)//": either fldptr1d or fldptr2d must be an input argument"//trim(stdname), &
+      call ESMF_LogWrite(trim(subname)//": either fldptr1d or fldptr2d must be an input argument", &
       ESMF_LOGMSG_ERROR, line=__LINE__, file=__FILE__)
 
       call ESMF_Finalize(endflag=ESMF_END_ABORT)
