@@ -1,6 +1,3 @@
-!! Originally from CTSM (insert sharing statement here)
-!! TODO: clean up
-
 module lnd_import_export
 
   use ESMF                    , only : ESMF_GridComp, ESMF_State, ESMF_Mesh, ESMF_StateGet
