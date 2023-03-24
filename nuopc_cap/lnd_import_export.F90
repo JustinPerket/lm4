@@ -13,7 +13,6 @@ module lnd_import_export
   use NUOPC                   , only : NUOPC_CompAttributeGet, NUOPC_Advertise, NUOPC_IsConnected
   use NUOPC_Model             , only : NUOPC_ModelGet
   use shr_kind_mod            , only : r8 => shr_kind_r8, cx=>shr_kind_cx, cs=>shr_kind_cs
-  use shr_sys_mod             , only : shr_sys_abort
   use nuopc_shr_methods       , only : chkerr
 
   implicit none
@@ -448,7 +447,7 @@ contains
     if (num > fldsMax) then
        call ESMF_LogWrite(trim(subname)//": ERROR num > fldsMax "//trim(stdname), &
             ESMF_LOGMSG_ERROR, line=__LINE__, file=__FILE__)
-       call shr_sys_abort(trim(subname)//": ERROR: num > fldsMax")
+       !! JP TODO call shr_sys_abort(trim(subname)//": ERROR: num > fldsMax")
     endif
     fldlist(num)%stdname = trim(stdname)
 
@@ -763,7 +762,7 @@ contains
        call ESMF_FieldGet(lfield, farrayPtr=fldptr2d, rc=rc)
        if (ChkErr(rc,__LINE__,u_FILE_u)) return
     else
-       call shr_sys_abort("either fldptr1d or fldptr2d must be an input argument")
+       !! JP TODO call shr_sys_abort("either fldptr1d or fldptr2d must be an input argument")
     end if
 
   end subroutine state_getfldptr
