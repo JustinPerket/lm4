@@ -417,15 +417,15 @@ contains
    !===============================================================================
    subroutine ModelAdvance(gcomp, rc)
 
-      use lm4_driver,           only: sfc_boundary_layer, flux_down_from_atmos
+      use lm4_driver,           only: sfc_boundary_layer, flux_down_from_atmos, flux_up_to_atmos
       use land_model_mod,       only: update_land_model_fast, update_land_model_slow
 
       ! Arguments
       type(ESMF_GridComp)  :: gcomp
-      type(ESMF_State)     :: importState, exportState
       integer, intent(out) :: rc
 
       ! Local variables
+      type(ESMF_State)     :: importState, exportState
       character(len=*),parameter :: subname=trim(modName)//':(ModelAdvance) '
       integer :: sec
 
@@ -459,6 +459,7 @@ contains
       call flux_down_from_atmos(real(sec), lm4_model)      ! JP: needs review of implicit coupling
       call update_land_model_fast(lm4_model%From_atm,lm4_model%From_lnd)
       call update_land_model_slow(lm4_model%From_atm,lm4_model%From_lnd)
+      call flux_up_to_atmos(lm4_model%From_lnd)
 
       call ESMF_LogWrite(subname//' finished', ESMF_LOGMSG_INFO)
 

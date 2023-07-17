@@ -34,7 +34,7 @@ module lm4_driver
 
    public :: lm4_nml_read
    public :: init_driver, end_driver
-   public :: sfc_boundary_layer, flux_down_from_atmos
+   public :: sfc_boundary_layer, flux_down_from_atmos, flux_up_to_atmos
    public :: debug_diag
 
 
@@ -48,6 +48,7 @@ module lm4_driver
 
    ! variables for between subroutines
    real, allocatable, dimension(:) :: &
+      ex_t_surf, ex_t_ca,         &
       ex_flux_t, ex_flux_lw,      &
       ex_dhdt_surf, ex_dedt_surf, &
       ex_drdt_surf,  ex_dhdt_atm, &
@@ -58,6 +59,9 @@ module lm4_driver
       ex_u_star,    &
       ex_wind,      &
       ex_z_atm   
+
+   real, allocatable, dimension(:) :: &
+      ex_e_t_n, ex_f_t_delt_n
 
    ! these originally had a tracer dimension
    real, allocatable, dimension(:,:) :: &
@@ -309,14 +313,14 @@ contains
          ex_seawater       !< true if exchange grid cell is over seawater
 
       real, dimension(lnd%ls:lnd%le) :: &
-         ex_t_surf   ,  &
-         ex_t_ca     ,  &
+         !ex_t_surf   ,  &
+         !ex_t_ca     ,  &
          ex_t_surf_miz, &
          ex_p_surf   ,  &
          ex_q_surf  ,  &
       !ex_slp      ,  &
          ex_dqsatdt_surf,  &
-         ex_f_t_delt_n, &
+         !ex_f_t_delt_n, &
 
       ! MOD these were moved from local ! so they can be passed to flux down
          ex_flux_u,    &
@@ -326,7 +330,7 @@ contains
 
       ! values added for LM3
 
-         ex_e_t_n    ,  &
+         !ex_e_t_n    ,  &
          !ex_e_q_n    ,  &
 
       !
@@ -339,6 +343,14 @@ contains
       integer :: tr, n, m ! tracer indices
       integer :: i
 
+
+      ! allocate storage for variables that are also used in flux_up_to_atmos
+      allocate( &
+         ex_t_surf(lnd%ls:lnd%le),    &
+         ex_t_ca(lnd%ls:lnd%le),      &
+         ex_e_t_n(lnd%ls:lnd%le),     &
+         ex_f_t_delt_n(lnd%ls:lnd%le) &
+      )
 
 
       ! ---------------------------
@@ -1037,44 +1049,122 @@ contains
 
    end subroutine flux_down_from_atmos
 
-   ! ! ----------------------------------------
-
+   !! ============================================================================
+   !! Adapted from GFDL atm_land_ice_flux_exchange,
+   !! stripped down to be "land only" on unstructured grid. 
+   !! Corrects the fluxes for consistency with the new surface temperatures in land.
+   !!
+   !! The following elements of the land_ice_atmos_boundary_type are computed:
+   !! 
+   !!        dt_t  = temperature change at the lowest
+   !!                 atmospheric level (deg k)
+   !!        dt_q  = specific humidity change at the lowest
+   !!                 atmospheric level (kg/kg)
+   !! 
    subroutine  flux_up_to_atmos( Land )
 
+      !! TODO: WHAT TO DO WITH land_ice_atmos_boundary_typestuff? use land_data_type instead?
+
       type(land_data_type),  intent(in)    :: Land !< A derived data type to specify land boundary data
+      ! type(land_ice_atmos_boundary_type), intent(inout) :: Land_Ice_Atmos_Boundary !< A derived data type to specify properties and fluxed
+      ! !! passed from exchange grid to the atmosphere, land and ice
 
-      !   where (Land%mask(:,:,1))
-      !      t_surf_new = Land%t_surf(:,:,1)
-      !      t_ca_new   = Land%t_ca  (:,:,1)
-      !   endwhere
+      ! NOTE. Not including here: (TODO: REVIEW)
+      ! 1. diagnostics
+      ! 2. blocking
+      ! 3. sw1way_bug, use_AM3_physics, _USE_LEGACY_LAND_, or SCM functionality
+      ! 4. OMP parallelization
+      ! 5. Stock changes
+      ! 6. data overrides
 
-      !   !??????? should this be done in land model ??????
-      !   call escomp (t_surf_new, q_surf_new)
-      !   where (Land%mask(:,:,1))
-      !      q_surf_new = Land%tr(:,:,1,1)
-      !   elsewhere
-      !      !q_surf_new = d622*q_surf_new/(p_surf-d378*q_surf_new)
-      !   endwhere
+      real, dimension(lnd%ls:lnd%le) :: &
+         ex_t_surf_new, &
+         ex_dt_t_surf,  &
+         ex_delta_t_n,  &
+         ex_t_ca_new,   &
+         ex_dt_t_ca,    &
+         ex_land_frac,  &
+         ex_temp
 
-      !   dt_t_ca   = t_ca_new   - t_ca   ! changes in near-surface T
-      !   dt_t_surf = t_surf_new - t_surf ! changes in radiative T
-      !   dt_q_surf = q_surf_new - q_surf ! changes in near-surface q
 
-      !   ! adjust fluxes and atmospheric increments for
-      !   ! implicit dependence on surface temperature
+      real, dimension(lnd%ls:lnd%le,ntcana) :: &
+         ex_tr_surf_new,    & ! updated tracer values at the surface
+         ex_dt_tr_surf,     & ! tendency of tracers at the surface
+         ex_delta_tr_n
 
-      !   flux_t        = flux_t      + dt_t_ca  *dhdt_surf
-      !   flux_lw       = flux_lw     - dt_t_surf*drdt_surf
-      !   Boundary%dt_t = f_t_delt_n  + dt_t_ca  *e_t_n
+      integer :: tr       ! tracer index
+      integer :: l        ! index for land grid
 
-      !   where (Land%mask(:,:,1))
-      !      flux_q                     = flux_q      + dt_q_surf*dedq_surf
-      !      Boundary%dt_tr(:,:,isphum) = f_q_delt_n  + dt_q_surf*e_q_n
-      !   elsewhere
-      !      !flux_q                     = flux_q      + dt_t_surf*dedt_surf
-      !      !Boundary%dt_tr(:,:,isphum) = f_q_delt_n  + dt_t_surf*e_q_n
-      !   endwhere
 
+
+      !----- compute surface temperature change -----
+
+      ex_t_surf_new = 200.0
+      ! ex_t_ca_new = ex_t_surf_new  ! since it is the same thing over oceans
+      ex_t_ca_new = Land%t_ca(:,ntile)
+      ex_t_surf_new = Land%t_surf(:,ntile)
+
+      do l = lnd%ls,lnd%le
+         ex_dt_t_ca(l)  = ex_t_ca_new(l)   - ex_t_ca(l)   ! changes in near-surface T
+         ex_dt_t_surf(l) = ex_t_surf_new(l) - ex_t_surf(l) ! changes in radiative T
+      enddo
+
+      !-----------------------------------------------------------------------
+      !-----  adjust fluxes and atmospheric increments for
+      !-----  implicit dependence on surface temperature -----
+      
+      ! original code uses n_exch_tr instead of ntcana
+      do tr = 1,ntcana
+          ! set up updated surface tracer field so that flux to atmos for absent
+          ! tracers is zero
+         do l = lnd%ls,lnd%le
+            !if(.not.ex_avail(i)) cycle
+            if (ex_dfdtr_surf(l,tr)/=0.0) then
+               ex_dt_tr_surf(l,tr) = -ex_flux_tr(l,tr)/ex_dfdtr_surf(l,tr)
+            else
+               ex_dt_tr_surf(l,tr) = 0.0
+            endif
+            ex_tr_surf_new(l,tr) = ex_tr_surf(l,tr)+ex_dt_tr_surf(l,tr)
+         enddo
+      enddo        
+      ! get all tracers available from land, and calculate changes in near-tracer field
+      do tr = 1,ntcana
+         ex_tr_surf_new(:,tr) = Land%tr(:,ntile,tr)
+      enddo
+
+      ! update tracer tendencies in the atmosphere
+      ! original code uses n_exch_tr instead of ntcana
+      do tr = 1,ntcana
+         do l = lnd%ls,lnd%le
+            ex_dt_tr_surf(l,tr) = ex_tr_surf_new(l,tr) - ex_tr_surf(l,tr)
+            ex_delta_tr_n(l,tr) = ex_f_tr_delt_n(l,tr) + ex_dt_tr_surf(l,tr) * ex_e_tr_n(l,tr)
+            ex_flux_tr(l,tr)    = ex_flux_tr(l,tr)     + ex_dt_tr_surf(l,tr) * ex_dfdtr_surf(l,tr)
+         enddo
+      enddo
+
+      ! TODO: convert get_from_xgrid calls
+      ! do tr=1,n_exch_tr
+      !    ! get updated tracer tendency on the atmospheic grid
+      !    n=tr_table(tr)%atm
+      !    call get_from_xgrid (Land_Ice_Atmos_Boundary%dt_tr(:,:,n), 'ATM', ex_delta_tr_n(:,tr), xmap_sfc)
+      ! enddo      
+
+      do l = lnd%ls,lnd%le
+         ex_flux_t(l)    = ex_flux_t(l)  + ex_dt_t_ca(l)   * ex_dhdt_surf(l)
+         ex_flux_lw(l)   = ex_flux_lw(l) - ex_dt_t_surf(l) * ex_drdt_surf(l)
+         ex_delta_t_n(l) = ex_f_t_delt_n(l)  + ex_dt_t_ca(l)*ex_e_t_n(l)
+      enddo         
+
+    !-----------------------------------------------------------------------
+    !---- get mean quantites on atmospheric grid ----
+ 
+   ! TODO: convert get_from_xgrid calls
+   !  call get_from_xgrid (Land_Ice_Atmos_Boundary%dt_t, 'ATM', ex_delta_t_n, xmap_sfc)
+   !  call get_from_xgrid (Land_Ice_Atmos_Boundary%shflx,'ATM', ex_flux_t    , xmap_sfc) !miz
+   !  call get_from_xgrid (Land_Ice_Atmos_Boundary%lhflx,'ATM', ex_flux_tr(:,isphum), xmap_sfc)!miz
+
+    !=======================================================================
+    !-------------------- diagnostics section ------------------------------
 
 
    end subroutine flux_up_to_atmos
@@ -1325,9 +1415,13 @@ contains
          ex_b_star,    &
          ex_u_star,    &
          ex_wind,      &
-         ex_z_atm               )
+         ex_z_atm,     &
+         ex_t_surf,    &
+         ex_t_ca,      &
+         ex_e_t_n,     &
+         ex_f_t_delt_n &
+      )
 
-      
    end subroutine end_driver
 
 
