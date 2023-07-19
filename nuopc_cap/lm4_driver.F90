@@ -221,30 +221,30 @@ contains
       ! ! Transfer from sfcprop to model data
       ! call sfc_prop_transfer(lm4_model)
 
-      allocate( &
-         ex_flux_t(lnd%ls:lnd%le), ex_flux_lw(lnd%ls:lnd%le),   &
-         ex_dhdt_surf(lnd%ls:lnd%le), ex_dedt_surf(lnd%ls:lnd%le), &
-         ex_drdt_surf(lnd%ls:lnd%le),  ex_dhdt_atm(lnd%ls:lnd%le), &
-         ex_drag_q(lnd%ls:lnd%le),    &   !< q drag.coeff.
-         ex_cd_t(lnd%ls:lnd%le),      &
-         ex_cd_m(lnd%ls:lnd%le),      &
-         ex_b_star(lnd%ls:lnd%le),    &
-         ex_u_star(lnd%ls:lnd%le),    &
-         ex_wind(lnd%ls:lnd%le),      &
-         ex_z_atm(lnd%ls:lnd%le)      &            
-      )
+      ! allocate( &
+      !    ex_flux_t(lnd%ls:lnd%le), ex_flux_lw(lnd%ls:lnd%le),   &
+      !    ex_dhdt_surf(lnd%ls:lnd%le), ex_dedt_surf(lnd%ls:lnd%le), &
+      !    ex_drdt_surf(lnd%ls:lnd%le),  ex_dhdt_atm(lnd%ls:lnd%le), &
+      !    ex_drag_q(lnd%ls:lnd%le),    &   !< q drag.coeff.
+      !    ex_cd_t(lnd%ls:lnd%le),      &
+      !    ex_cd_m(lnd%ls:lnd%le),      &
+      !    ex_b_star(lnd%ls:lnd%le),    &
+      !    ex_u_star(lnd%ls:lnd%le),    &
+      !    ex_wind(lnd%ls:lnd%le),      &
+      !    ex_z_atm(lnd%ls:lnd%le)      &            
+      ! )
 
-      ! these originally had a tracer dimension
-      allocate( &
-         ex_tr_atm(lnd%ls:lnd%le,ntcana),  &
-         ex_tr_surf(lnd%ls:lnd%le,ntcana),    & !< near-surface tracer fields
-         ex_flux_tr(lnd%ls:lnd%le,ntcana),    & !< tracer fluxes
-         ex_dfdtr_surf(lnd%ls:lnd%le,ntcana), & !< d(tracer flux)/d(surf tracer)
-         ex_dfdtr_atm(lnd%ls:lnd%le,ntcana),  & !< d(tracer flux)/d(atm tracer)
-         ex_e_tr_n(lnd%ls:lnd%le,ntcana),     & !< coefficient in implicit scheme
-         ex_f_tr_delt_n(lnd%ls:lnd%le,ntcana) &  !< coefficient in implicit scheme      
+      ! ! these originally had a tracer dimension
+      ! allocate( &
+      !    ex_tr_atm(lnd%ls:lnd%le,ntcana),  &
+      !    ex_tr_surf(lnd%ls:lnd%le,ntcana),    & !< near-surface tracer fields
+      !    ex_flux_tr(lnd%ls:lnd%le,ntcana),    & !< tracer fluxes
+      !    ex_dfdtr_surf(lnd%ls:lnd%le,ntcana), & !< d(tracer flux)/d(surf tracer)
+      !    ex_dfdtr_atm(lnd%ls:lnd%le,ntcana),  & !< d(tracer flux)/d(atm tracer)
+      !    ex_e_tr_n(lnd%ls:lnd%le,ntcana),     & !< coefficient in implicit scheme
+      !    ex_f_tr_delt_n(lnd%ls:lnd%le,ntcana) &  !< coefficient in implicit scheme      
 
-      )
+      ! )
 
    end subroutine init_driver
 
@@ -344,7 +344,33 @@ contains
       integer :: i
 
 
-      ! allocate storage for variables that are also used in flux_up_to_atmos
+      !! allocate storage for variables that are also used in flux_down_from_atmos and/or flux_up_to_atmos
+
+      allocate( &
+         ex_flux_t(lnd%ls:lnd%le), ex_flux_lw(lnd%ls:lnd%le),   &
+         ex_dhdt_surf(lnd%ls:lnd%le), ex_dedt_surf(lnd%ls:lnd%le), &
+         ex_drdt_surf(lnd%ls:lnd%le),  ex_dhdt_atm(lnd%ls:lnd%le), &
+         ex_drag_q(lnd%ls:lnd%le),    &   !< q drag.coeff.
+         ex_cd_t(lnd%ls:lnd%le),      &
+         ex_cd_m(lnd%ls:lnd%le),      &
+         ex_b_star(lnd%ls:lnd%le),    &
+         ex_u_star(lnd%ls:lnd%le),    &
+         ex_wind(lnd%ls:lnd%le),      &
+         ex_z_atm(lnd%ls:lnd%le)      &            
+      )
+
+      ! these originally had a tracer dimension
+      allocate( &
+         ex_tr_atm(lnd%ls:lnd%le,ntcana),  &
+         ex_tr_surf(lnd%ls:lnd%le,ntcana),    & !< near-surface tracer fields
+         ex_flux_tr(lnd%ls:lnd%le,ntcana),    & !< tracer fluxes
+         ex_dfdtr_surf(lnd%ls:lnd%le,ntcana), & !< d(tracer flux)/d(surf tracer)
+         ex_dfdtr_atm(lnd%ls:lnd%le,ntcana),  & !< d(tracer flux)/d(atm tracer)
+         ex_e_tr_n(lnd%ls:lnd%le,ntcana),     & !< coefficient in implicit scheme
+         ex_f_tr_delt_n(lnd%ls:lnd%le,ntcana) &  !< coefficient in implicit scheme      
+
+      )
+
       allocate( &
          ex_t_surf(lnd%ls:lnd%le),    &
          ex_t_ca(lnd%ls:lnd%le),      &

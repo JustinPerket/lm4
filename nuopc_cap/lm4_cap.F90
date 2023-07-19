@@ -460,6 +460,7 @@ contains
       call update_land_model_fast(lm4_model%From_atm,lm4_model%From_lnd)
       call update_land_model_slow(lm4_model%From_atm,lm4_model%From_lnd)
       call flux_up_to_atmos(lm4_model%From_lnd)
+      call end_driver()   ! TODO , bad name, rename. just dellocates after run step
 
       call ESMF_LogWrite(subname//' finished', ESMF_LOGMSG_INFO)
 
@@ -475,7 +476,7 @@ contains
       rc = ESMF_SUCCESS
       call ESMF_LogWrite(subname//' called', ESMF_LOGMSG_INFO)
 
-      call end_driver()
+      !call end_driver()
       call land_model_end(lm4_model%From_atm, lm4_model%From_lnd)
 
       call diag_manager_end(lm4_model%Time_land)
