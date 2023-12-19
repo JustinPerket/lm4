@@ -7,6 +7,7 @@ module lm4_cap_mod
    use ESMF                  ! TODO: limit to only what is needed
    use NUOPC,                only: NUOPC_CompDerive, NUOPC_CompSetEntryPoint, NUOPC_CompSpecialize
    use NUOPC,                only: NUOPC_CompFilterPhaseMap, NUOPC_CompAttributeGet, NUOPC_CompAttributeSet
+   use NUOPC,                only : NUOPC_CompCheckSetClock
    use NUOPC_Model,          only: model_routine_SS           => SetServices
    use NUOPC_Model,          only: SetVM
    use NUOPC_Model,          only: model_label_Advance        => label_Advance
@@ -632,32 +633,23 @@ contains
       ! query component for its internal state
       nullify(is_local%wrap)
       call ESMF_GridCompGetInternalState(model, is_local, rc)
-      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
-         line=__LINE__, &
-         file=__FILE__)) &
-         return  ! bail out
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
+
 
       ! set slowClock to be the component clock
       call ESMF_GridCompSet(model, clock=is_local%wrap%slowClock, rc=rc)
-      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
-         line=__LINE__, &
-         file=__FILE__)) &
-         return  ! bail out
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
+
 
       ! query component for driver clock
       call NUOPC_ModelGet(model, driverClock=driverClock, rc=rc)
-      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
-         line=__LINE__, &
-         file=__FILE__)) &
-         return  ! bail out
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
+
 
       ! check and set the model clock against the driver clock
-      call NUOPC_CompCheckSetClock(model, driverClock, rc)
-      if (ESMF_LogFoundError(rcToCheck=rc, &
-         msg="NUOPC INCOMPATIBILITY DETECTED: between model and driver clocks", &
-         line=__LINE__, &
-         file=__FILE__)) &
-         return  ! bail out
+      call NUOPC_CompCheckSetClock(model, driverClock, rc=rc)
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
+
 
    end subroutine SetRunClock_slow
 
