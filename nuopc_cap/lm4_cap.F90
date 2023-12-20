@@ -7,14 +7,14 @@ module lm4_cap_mod
    use ESMF                  ! TODO: limit to only what is needed
    use NUOPC,                only: NUOPC_CompDerive, NUOPC_CompSetEntryPoint, NUOPC_CompSpecialize
    use NUOPC,                only: NUOPC_CompFilterPhaseMap, NUOPC_CompAttributeGet, NUOPC_CompAttributeSet
-   use NUOPC,                only : NUOPC_CompCheckSetClock
+   use NUOPC,                only : NUOPC_CompCheckSetClock, NUOPC_CompSetClock
    use NUOPC_Model,          only: model_routine_SS           => SetServices
    use NUOPC_Model,          only: SetVM
    use NUOPC_Model,          only: model_label_Advance        => label_Advance
    use NUOPC_Model,          only: model_label_DataInitialize => label_DataInitialize
    use NUOPC_Model,          only: model_label_SetRunClock    => label_SetRunClock
    use NUOPC_Model,          only: model_label_Finalize       => label_Finalize
-   use NUOPC_Model,          only: routine_Run, label_SetRunClock
+   use NUOPC_Model,          only: routine_Run, label_SetRunClock, label_SetClock
    use NUOPC_Model,          only: NUOPC_ModelGet
 
    use lm4_kind_mod,         only: r8 => shr_kind_r8, cl=>shr_kind_cl
@@ -111,6 +111,9 @@ contains
       call NUOPC_CompSetEntryPoint(gcomp, ESMF_METHOD_INITIALIZE, &
          phaseLabelList=(/"IPDv01p3"/), userRoutine=InitializeRealize, rc=rc)
 
+      call NUOPC_CompSpecialize(gcomp, specLabel=label_SetClock, &
+         specRoutine=SetClock, rc=rc)
+
       ! attach specializing method(s)
       call NUOPC_CompSetEntryPoint(gcomp, ESMF_METHOD_RUN, &
          phaseLabelList=(/"land_fast"/), userRoutine=routine_Run, rc=rc)
@@ -195,7 +198,7 @@ contains
 
       integer                   :: stat
       type(type_InternalState)  :: is_local
-  
+
       !-------------------------------------------------------------------------------
 
 
@@ -333,7 +336,6 @@ contains
       ! if (ChkErr(rc,__LINE__,u_FILE_u)) return
       call NUOPC_ModelGet(gcomp, driverClock=dclock, rc=rc)
       if (ChkErr(rc,__LINE__,u_FILE_u)) return
-      call ESMF_ClockPrint(dclock,rc=rc)
 
 
       call ESMF_ClockGet(clock,  timeStep=model_timestep, rc=rc)
@@ -346,7 +348,6 @@ contains
       write(logmsg,*) lm4_model%nml%dt_lnd_slow
       call ESMF_LogWrite(trim(subname)//'init LM4 slow timestep: '//trim(logmsg), ESMF_LOGMSG_INFO)
 
-      call ESMF_ClockPrint(clock,rc=rc)
 
       ! ! JP TMP DEBUG
       ! call ESMF_GridCompGet(gcomp, clock=clock, rc=rc)
@@ -499,6 +500,55 @@ contains
    end subroutine InitializeRealize
 
    !===============================================================================
+
+   subroutine SetClock(model, rc)
+      type(ESMF_GridComp)  :: model
+      integer, intent(out) :: rc
+
+      ! local variables
+      integer                   :: stat
+      type(type_InternalState)  :: is_local
+      type(ESMF_Clock)          :: clock
+      type(ESMF_TimeInterval)   :: timeStep
+
+      rc = ESMF_SUCCESS
+
+      ! obtain internal state
+      nullify(is_local%wrap)
+      call ESMF_GridCompGetInternalState(model, is_local, rc)
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
+
+      ! query the Component for its clock
+      call NUOPC_ModelGet(model, modelClock=clock, rc=rc)
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
+
+      ! initialize internal clock
+      ! - on entry, the component clock is a copy of the parent clock
+      ! - two clocks: slowClock and fastClock must be set here:
+      !   * slowClock:
+      !     + implement directly as the incoming Component Clock object.
+      !   * fastClock:
+      !     + implement as a new Clock object created here from the incoming
+
+
+      ! slowClock is an alias to the current Component Clock
+      is_local%wrap%slowClock = clock
+
+      ! fastClock starts as a copy of the current Component Clock
+      call NUOPC_CompSetClock(model, clock, rc=rc) ! replace comp clock with copy
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
+
+      ! query the Component for its clock
+      call NUOPC_ModelGet(model, modelClock=clock, rc=rc)
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
+
+      ! fastClock is an alias to the current Component Clock
+      is_local%wrap%fastClock = clock
+
+
+   end subroutine SetClock
+
+   !===============================================================================
    subroutine ModelAdvance(gcomp, rc)
 
       use lm4_driver,           only: sfc_boundary_layer, flux_down_from_atmos
@@ -558,11 +608,6 @@ contains
       call update_land_model_fast(lm4_model%From_atm,lm4_model%From_lnd)
 
 
-      ! JP TMP DEBUG
-      call ESMF_ClockPrint(clock,rc=rc)
-      call ESMF_ClockPrint(dclock,rc=rc)
-
-
       call ESMF_ClockGet(dclock,  currSimTime=model_time, rc=rc)
       if (ChkErr(rc,__LINE__,u_FILE_u)) return
       call ESMF_TimeIntervalGet(model_time, s=time_sec, rc=rc)
@@ -570,9 +615,13 @@ contains
       write(logmsg,*) time_sec
       call ESMF_LogWrite(trim(subname)//'MA LM4 driver currSimTime: '//trim(logmsg), ESMF_LOGMSG_INFO)
 
+      ! JP TMP DEBUG
+      write(*,*) 'ModelAdvance: clock info:'
+      call ESMF_ClockPrint(dclock,rc=rc)
+
       ! ! quick way to only call on slow timestep
       ! if ( time_sec /= 0 .and. mod(time_sec,lm4_model%nml%dt_lnd_slow) == 0 ) then
-      !    call update_land_model_slow(lm4_model%From_atm,lm4_model%From_lnd)
+         call update_land_model_slow(lm4_model%From_atm,lm4_model%From_lnd)
       !    call ESMF_LogWrite('MA LM4 update_land_model_slow called', ESMF_LOGMSG_INFO)
       ! endif
 
@@ -635,16 +684,13 @@ contains
       call ESMF_GridCompGetInternalState(model, is_local, rc)
       if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
-
       ! set slowClock to be the component clock
       call ESMF_GridCompSet(model, clock=is_local%wrap%slowClock, rc=rc)
       if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
-
       ! query component for driver clock
       call NUOPC_ModelGet(model, driverClock=driverClock, rc=rc)
       if (ChkErr(rc,__LINE__,u_FILE_u)) return
-
 
       ! check and set the model clock against the driver clock
       call NUOPC_CompCheckSetClock(model, driverClock, rc=rc)
@@ -656,6 +702,9 @@ contains
    !===============================================================================
 
    subroutine SetRunClock_fast(model, rc)
+
+      use ESMF, only: ESMF_ClockPrint ! TMP DEBUG
+
       type(ESMF_GridComp)   :: model
       integer, intent(out)  :: rc
 
@@ -671,32 +720,25 @@ contains
       ! query component for its internal state
       nullify(is_local%wrap)
       call ESMF_GridCompGetInternalState(model, is_local, rc)
-      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
-         line=__LINE__, &
-         file=__FILE__)) &
-         return  ! bail out
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
       ! set fastClock to be the component clock
       call ESMF_GridCompSet(model, clock=is_local%wrap%fastClock, rc=rc)
-      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
-         line=__LINE__, &
-         file=__FILE__)) &
-         return  ! bail out
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
       ! query component for driver clock
       call NUOPC_ModelGet(model, driverClock=driverClock, rc=rc)
-      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
-         line=__LINE__, &
-         file=__FILE__)) &
-         return  ! bail out
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
+
+      ! TMP DEBUG:
+      write(*,*) 'SetRunClock_fast: fastClock info:'
+      call ESMF_ClockPrint(is_local%wrap%fastClock,rc=rc)
+      write(*,*) 'SetRunClock_fast: fastClock info:'
+      call ESMF_ClockPrint(driverClock,rc=rc)
 
       ! check and set the model clock against the driver clock
       call NUOPC_CompCheckSetClock(model, driverClock, rc=rc)
-      if (ESMF_LogFoundError(rcToCheck=rc, &
-         msg="NUOPC INCOMPATIBILITY DETECTED: between model and driver clocks", &
-         line=__LINE__, &
-         file=__FILE__)) &
-         return  ! bail out
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
    end subroutine SetRunClock_fast
 
@@ -710,7 +752,7 @@ contains
 
       integer                   :: stat
       type(type_InternalState)  :: is_local
-  
+
       rc = ESMF_SUCCESS
 
 
