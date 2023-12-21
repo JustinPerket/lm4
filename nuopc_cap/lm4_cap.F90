@@ -45,6 +45,8 @@ module lm4_cap_mod
       NOLEAP, NO_CALENDAR
    use sat_vapor_pres_mod,   only: sat_vapor_pres_init
 
+   use ESMF, only: ESMF_ClockPrint, ESMF_AlarmIsRinging ! TMP DEBUG
+
    implicit none
    private ! except
 
@@ -112,7 +114,7 @@ contains
          phaseLabelList=(/"IPDv01p3"/), userRoutine=InitializeRealize, rc=rc)
 
       call NUOPC_CompSpecialize(gcomp, specLabel=label_SetClock, &
-         specRoutine=SetClock, rc=rc)
+      specRoutine=SetClock, rc=rc)
 
       ! attach specializing method(s)
       call NUOPC_CompSetEntryPoint(gcomp, ESMF_METHOD_RUN, &
@@ -121,7 +123,7 @@ contains
          specPhaseLabel="land_fast", specRoutine=ModelAdvance, rc=rc)
       call NUOPC_CompSpecialize(gcomp, specLabel=label_SetRunClock, &
          specPhaseLabel="land_fast", specRoutine=SetRunClock_fast, rc=rc)
-
+      
 
       ! attach method for slow land model step
       call NUOPC_CompSetEntryPoint(gcomp, ESMF_METHOD_RUN, &
@@ -130,7 +132,7 @@ contains
          specPhaseLabel="land_slow", specRoutine=ModelAdvance_slow, rc=rc)
       call NUOPC_CompSpecialize(gcomp, specLabel=label_SetRunClock, &
          specPhaseLabel="land_slow", specRoutine=SetRunClock_slow, rc=rc)
-
+      
       call NUOPC_CompSpecialize(gcomp, specLabel=model_label_Finalize, &
          specRoutine=ModelFinalize, rc=rc)
 
@@ -509,6 +511,7 @@ contains
       integer                   :: stat
       type(type_InternalState)  :: is_local
       type(ESMF_Clock)          :: clock
+      type(ESMF_Clock)          :: dclock
       type(ESMF_TimeInterval)   :: timeStep
 
       rc = ESMF_SUCCESS
@@ -519,17 +522,16 @@ contains
       if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
       ! query the Component for its clock
-      call NUOPC_ModelGet(model, modelClock=clock, rc=rc)
+      call NUOPC_ModelGet(model, modelClock=clock, driverClock=dclock, rc=rc)
       if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
-      ! initialize internal clock
-      ! - on entry, the component clock is a copy of the parent clock
-      ! - two clocks: slowClock and fastClock must be set here:
-      !   * slowClock:
-      !     + implement directly as the incoming Component Clock object.
-      !   * fastClock:
-      !     + implement as a new Clock object created here from the incoming
-
+      write(*,*) 'SetClock: clock info:'
+      call ESMF_ClockPrint(clock,rc=rc)
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
+      !! this doesn't exist yet here
+      ! write(*,*) 'SetClock: driverClock info:'
+      ! call ESMF_ClockPrint(dclock,rc=rc)
+      ! if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
       ! slowClock is an alias to the current Component Clock
       is_local%wrap%slowClock = clock
@@ -543,6 +545,7 @@ contains
       if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
       ! fastClock is an alias to the current Component Clock
+      ! want fastClock to be same as driver clock when it exists
       is_local%wrap%fastClock = clock
 
 
@@ -553,7 +556,6 @@ contains
 
       use lm4_driver,           only: sfc_boundary_layer, flux_down_from_atmos
       use land_model_mod,       only: update_land_model_fast, update_land_model_slow
-      use ESMF, only: ESMF_ClockPrint, ESMF_AlarmIsRinging ! TMP DEBUG
 
       ! Arguments
       type(ESMF_GridComp)  :: gcomp
@@ -621,7 +623,7 @@ contains
 
       ! ! quick way to only call on slow timestep
       ! if ( time_sec /= 0 .and. mod(time_sec,lm4_model%nml%dt_lnd_slow) == 0 ) then
-         call update_land_model_slow(lm4_model%From_atm,lm4_model%From_lnd)
+      call update_land_model_slow(lm4_model%From_atm,lm4_model%From_lnd)
       !    call ESMF_LogWrite('MA LM4 update_land_model_slow called', ESMF_LOGMSG_INFO)
       ! endif
 
@@ -733,8 +735,10 @@ contains
       ! TMP DEBUG:
       write(*,*) 'SetRunClock_fast: fastClock info:'
       call ESMF_ClockPrint(is_local%wrap%fastClock,rc=rc)
-      write(*,*) 'SetRunClock_fast: fastClock info:'
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
+      write(*,*) 'SetRunClock_fast: driverClock info:'
       call ESMF_ClockPrint(driverClock,rc=rc)
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
       ! check and set the model clock against the driver clock
       call NUOPC_CompCheckSetClock(model, driverClock, rc=rc)
