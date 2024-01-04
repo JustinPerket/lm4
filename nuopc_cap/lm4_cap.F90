@@ -544,6 +544,10 @@ contains
       call NUOPC_ModelGet(model, modelClock=clock, rc=rc)
       if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
+      write(*,*) 'SetClock 2: clock info:'
+      call ESMF_ClockPrint(clock,rc=rc)
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
+
       ! fastClock is an alias to the current Component Clock
       ! want fastClock to be same as driver clock when it exists
       is_local%wrap%fastClock = clock
@@ -694,6 +698,15 @@ contains
       call NUOPC_ModelGet(model, driverClock=driverClock, rc=rc)
       if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
+      ! TMP DEBUG:
+      write(*,*) 'SetRunClock_slow: slowClock info:'
+      call ESMF_ClockPrint(is_local%wrap%slowClock,rc=rc)
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
+      write(*,*) 'SetRunClock_slow: driverClock info:'
+      call ESMF_ClockPrint(driverClock,rc=rc)
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
+
+
       ! check and set the model clock against the driver clock
       call NUOPC_CompCheckSetClock(model, driverClock, rc=rc)
       if (ChkErr(rc,__LINE__,u_FILE_u)) return
@@ -713,6 +726,7 @@ contains
       ! local variables
       type(type_InternalState)  :: is_local
       type(ESMF_Clock)          :: driverClock
+      type(ESMF_Clock)          :: modelClock ! TMP DEBUG
       type(ESMF_Time)           :: checkCurrTime, currTime, stopTime
       type(ESMF_TimeInterval)   :: checkTimeStep, timeStep
       type(ESMF_Direction_Flag) :: direction
@@ -729,15 +743,21 @@ contains
       if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
       ! query component for driver clock
-      call NUOPC_ModelGet(model, driverClock=driverClock, rc=rc)
+      call NUOPC_ModelGet(model, driverClock=driverClock, modelClock=modelClock, rc=rc)
       if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
       ! TMP DEBUG:
       write(*,*) 'SetRunClock_fast: fastClock info:'
       call ESMF_ClockPrint(is_local%wrap%fastClock,rc=rc)
       if (ChkErr(rc,__LINE__,u_FILE_u)) return
+      write(*,*) 'SetRunClock_fast: slowClock info:'
+      call ESMF_ClockPrint(is_local%wrap%slowClock,rc=rc)
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return      
       write(*,*) 'SetRunClock_fast: driverClock info:'
       call ESMF_ClockPrint(driverClock,rc=rc)
+      if (ChkErr(rc,__LINE__,u_FILE_u)) return
+      write(*,*) 'SetRunClock_fast: modelClock info:'
+      call ESMF_ClockPrint(modelClock,rc=rc)
       if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
       ! check and set the model clock against the driver clock
