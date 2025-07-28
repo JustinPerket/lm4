@@ -835,6 +835,8 @@ subroutine land_cover_cold_start_0d (set,glac0,lake0,soil0,soiltags0,&
   ! ---- local vars
   real :: glac(size(glac0(:))), lake(size(lake0(:))), &
           soil(size(soil0(:))), vegn(size(vegn0(:)))
+  real :: sum_glac, sum_lake, sum_soil 
+  real :: maxsum 
   type(land_tile_type), pointer :: tile
   integer :: i,j,k
   real :: factor ! normalizing factor for the tile areas
@@ -874,6 +876,31 @@ subroutine land_cover_cold_start_0d (set,glac0,lake0,soil0,soiltags0,&
 	soil = soil/factor
      endif
   endif
+
+
+  ! JP make single-tile setup by renormalizing largest fraction to 1, and set others 0
+  sum_glac = sum(glac) ! sum over n_dim_glac_types
+  sum_lake = sum(lake) ! sum over n_dim_lake_types
+  sum_soil = sum(soil) ! sum over n_dim_soil_types
+  maxsum = max( sum_glac, sum_lake, sum_soil )
+
+  if (maxsum == sum_glac) then
+     glac = glac/sum_glac 
+     lake = 0.0
+     soil = 0.0
+  else if (maxsum == sum_lake) then
+     glac = 0.0
+     lake = lake/sum_lake 
+     soil = 0.0
+  else if (maxsum == sum_soil) then
+     glac = 0.0
+     lake = 0.0
+     soil = soil/sum_soil
+  end if
+  ! end JP
+
+
+
 
   if(is_watch_point()) then
      write(*,*)'#### land_cover_cold_start_0d input data ####'
