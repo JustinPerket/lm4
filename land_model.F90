@@ -888,15 +888,24 @@ subroutine land_cover_cold_start_0d (set,glac0,lake0,soil0,soiltags0,&
      glac = glac/sum_glac 
      lake = 0.0
      soil = 0.0
+     vegn = 0.0
   else if (maxsum == sum_lake) then
      glac = 0.0
      lake = lake/sum_lake 
      soil = 0.0
+     vegn = 0.0
   else if (maxsum == sum_soil) then
      glac = 0.0
      lake = 0.0
      soil = soil/sum_soil
   end if
+
+  factor = sum(soil)+sum(glac)+sum(lake)
+  if(factor>0)then
+     glac = glac/factor
+     lake = lake/factor
+     soil = soil/factor
+  endif
   ! end JP
 
 
